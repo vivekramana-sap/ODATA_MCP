@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JAM OData MCP — Configurator</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "72", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: #f5f6fa; color: #32363a; font-size: 14px; line-height: 1.4; }
+    code { font-family: "SFMono-Regular", Consolas, monospace; }
+
+    /* ── App shell ──────────────────────────────────────────────────── */
+    .app { min-height: 100vh; display: flex; flex-direction: column; }
+    .header { background: #0a6ed1; color: #fff; padding: 0 24px; display: flex;
+              align-items: center; gap: 16px; height: 52px;
+              box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    .header-title { font-size: 16px; font-weight: 600; flex: 1; letter-spacing: .3px; }
+    .bridge-status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .tabs { background: #fff; border-bottom: 1px solid #d9d9d9; padding: 0 24px; display: flex; }
+    .tab { padding: 13px 20px; cursor: pointer; font-size: 14px; color: #6a6d70;
+           border-bottom: 3px solid transparent; transition: all .15s; user-select: none; }
+    .tab:hover { color: #0a6ed1; background: #f0f4ff; }
+    .tab.active { color: #0a6ed1; border-bottom-color: #0a6ed1; font-weight: 600; }
+    .content { flex: 1; padding: 28px 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 5px rgba(0,0,0,.09);
+            padding: 20px; margin-bottom: 16px; }
+    .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .card-title { font-size: 15px; font-weight: 600; flex: 1; }
+
+    /* ── Buttons ────────────────────────────────────────────────────── */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px;
+           border-radius: 6px; border: none; cursor: pointer; font-size: 13px;
+           font-weight: 500; transition: all .15s; white-space: nowrap; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary  { background: #0a6ed1; color: #fff; }
+    .btn-primary:hover:not(:disabled)  { background: #085caa; }
+    .btn-success  { background: #107e3e; color: #fff; }
+    .btn-success:hover:not(:disabled)  { background: #0c6430; }
+    .btn-danger   { background: #bb0000; color: #fff; }
+    .btn-danger:hover:not(:disabled)   { background: #9a0000; }
+    .btn-ghost    { background: transparent; color: #0a6ed1; border: 1px solid #0a6ed1; }
+    .btn-ghost:hover:not(:disabled)    { background: #f0f4ff; }
+    .btn-secondary { background: #f0f0f0; color: #32363a; }
+    .btn-secondary:hover:not(:disabled){ background: #e0e0e0; }
+    .btn-sm  { padding: 4px 10px; font-size: 12px; }
+    .btn-lg  { padding: 10px 28px; font-size: 15px; }
+
+    /* ── Forms ──────────────────────────────────────────────────────── */
+    .form-group  { margin-bottom: 16px; }
+    .form-label  { display: block; font-size: 13px; font-weight: 500; color: #6a6d70; margin-bottom: 6px; }
+    .form-label .req { color: #bb0000; margin-left: 3px; }
+    .form-input  { width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px;
+                   font-size: 14px; color: #32363a; background: #fff; transition: border-color .15s; outline: none; }
+    .form-input:focus { border-color: #0a6ed1; box-shadow: 0 0 0 2px rgba(10,110,209,.15); }
+    .hint { font-size: 12px; color: #6a6d70; margin-top: 4px; }
+
+    /* ── Reveal input ───────────────────────────────────────────────── */
+    .reveal-wrap { position: relative; display: flex; }
+    .reveal-wrap .form-input { padding-right: 38px; }
+    .reveal-btn  { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+                   background: none; border: none; cursor: pointer; font-size: 15px;
+                   line-height: 1; color: #6a6d70; padding: 2px; }
+    .reveal-btn:hover { color: #32363a; }
+
+    /* ── Toggle ─────────────────────────────────────────────────────── */
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; }
+    .toggle { position: relative; width: 40px; height: 22px; display: inline-block; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; inset: 0; background: #d9d9d9; border-radius: 22px;
+                     cursor: pointer; transition: background .2s; }
+    .toggle input:checked + .toggle-slider { background: #0a6ed1; }
+    .toggle-slider::before { content: ''; position: absolute; height: 16px; width: 16px;
+                              left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
+                              transition: transform .2s; }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+    /* ── Status dot & badges ────────────────────────────────────────── */
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: #107e3e; box-shadow: 0 0 5px rgba(16,126,62,.6); }
+    .dot-red    { background: #bb0000; }
+    .dot-orange { background: #e9730c; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-blue   { background: #e8f1fd; color: #0a6ed1; }
+    .badge-green  { background: #e8f5ec; color: #107e3e; }
+    .badge-red    { background: #fde8e8; color: #bb0000; }
+    .badge-orange { background: #fdeede; color: #e9730c; }
+    .badge-gray   { background: #f0f0f0; color: #6a6d70; }
+
+    /* ── Grid helpers ───────────────────────────────────────────────── */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+    .two-col { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+    @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+    .flex  { display: flex; }
+    .items-center { align-items: center; }
+    .gap-2 { gap: 8px; }
+    .gap-3 { gap: 12px; }
+    .flex-1 { flex: 1; }
+    .mt-2 { margin-top: 8px; }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+    .mb-4 { margin-bottom: 16px; }
+
+    /* ── Section title ──────────────────────────────────────────────── */
+    .section-title { font-size: 12px; font-weight: 700; color: #6a6d70; text-transform: uppercase;
+                     letter-spacing: .7px; margin-bottom: 14px; padding-bottom: 8px;
+                     border-bottom: 1px solid #f0f0f0; }
+
+    /* ── Service card ───────────────────────────────────────────────── */
+    .service-card { border-left: 4px solid #0a6ed1; }
+    .service-url  { font-family: monospace; font-size: 12px; color: #6a6d70;
+                    word-break: break-all; margin-bottom: 12px; }
+    .service-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .probe-panel { margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0; }
+    .probe-section { margin-bottom: 14px; }
+    .probe-section-title { font-size: 11px; font-weight: 700; color: #6a6d70;
+                           text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+    .checkbox-row input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; accent-color: #0a6ed1; flex-shrink: 0; }
+    .field-meta { font-size: 11px; color: #9a9a9a; margin-left: 4px; }
+    .select-all-row { display: flex; gap: 10px; margin-bottom: 6px; }
+
+    /* ── Modal ──────────────────────────────────────────────────────── */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45);
+               display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: #fff; border-radius: 12px; padding: 28px; width: 100%;
+             max-width: 520px; max-height: 90vh; overflow-y: auto;
+             box-shadow: 0 8px 32px rgba(0,0,0,.22); }
+    .modal-header { display: flex; align-items: center; margin-bottom: 20px; }
+    .modal-title  { font-size: 16px; font-weight: 600; flex: 1; }
+    .modal-close  { background: none; border: none; font-size: 20px; cursor: pointer;
+                    color: #6a6d70; line-height: 1; padding: 2px; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+    /* ── Tool list & testing ────────────────────────────────────────── */
+    .search-input { width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9;
+                    border-bottom: none; border-radius: 6px 6px 0 0;
+                    font-size: 13px; outline: none; }
+    .search-input:focus { border-color: #0a6ed1; }
+    .tool-list { max-height: 360px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 0 0 6px 6px; }
+    .tool-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background .1s; }
+    .tool-item:hover { background: #f5f8ff; }
+    .tool-item.selected { background: #e8f1fd; border-left: 3px solid #0a6ed1; }
+    .tool-item:last-child { border-bottom: none; }
+    .tool-name { font-family: monospace; font-size: 12px; font-weight: 600; color: #0a6ed1; }
+    .tool-desc { font-size: 12px; color: #6a6d70; margin-top: 2px; }
+
+    /* ── Bridge bar ─────────────────────────────────────────────────── */
+    .bridge-bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+                  background: #f7f7f7; border-radius: 8px; margin-bottom: 20px;
+                  border: 1px solid #e0e0e0; }
+    .bridge-info { flex: 1; }
+    .bridge-status-text { font-size: 13px; font-weight: 600; }
+    .bridge-pid { font-size: 11px; color: #6a6d70; margin-top: 2px; }
+
+    /* ── Response / Log panels ──────────────────────────────────────── */
+    .response-panel { background: #1e2227; border-radius: 8px; padding: 16px;
+                      font-family: monospace; font-size: 13px; color: #abb2bf;
+                      max-height: 420px; overflow: auto; position: relative; }
+    .response-copy  { position: absolute; top: 10px; right: 10px; background: #2d3139;
+                      color: #abb2bf; border: 1px solid #3d4147; border-radius: 4px;
+                      padding: 3px 8px; cursor: pointer; font-size: 11px; }
+    .response-copy:hover { background: #3d4147; }
+    .log-panel { background: #1e2227; border-radius: 8px; padding: 16px; font-family: monospace;
+                 font-size: 12px; color: #98c379; max-height: 420px; overflow-y: auto; min-height: 80px; }
+    .log-line { line-height: 1.6; white-space: pre-wrap; }
+    .log-err  { color: #e06c75; }
+
+    /* ── Checklist ──────────────────────────────────────────────────── */
+    .checklist-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; }
+    .check-ok   { color: #107e3e; font-weight: 700; }
+    .check-fail { color: #bb0000; font-weight: 700; }
+    .check-pend { color: #6a6d70; }
+
+    /* ── Empty state ────────────────────────────────────────────────── */
+    .empty { text-align: center; padding: 48px 24px; color: #6a6d70; }
+    .empty-icon { font-size: 44px; margin-bottom: 12px; }
+    .empty-text { font-size: 15px; }
+
+    /* ── Toast ──────────────────────────────────────────────────────── */
+    .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px;
+             border-radius: 8px; font-size: 14px; font-weight: 500; color: #fff;
+             z-index: 2000; animation: slideUp .25s ease; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+    .toast-success { background: #107e3e; }
+    .toast-error   { background: #bb0000; }
+    @keyframes slideUp { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* ── Warning banner ─────────────────────────────────────────────── */
+    .warning-banner { border-left: 4px solid #e9730c; background: #fff8f0; padding: 12px 16px;
+                      border-radius: 0 6px 6px 0; font-size: 13px; color: #6a4d20; margin-bottom: 16px; }
+
+    pre.json { margin: 0; white-space: pre-wrap; word-break: break-all; }
+    hr { border: none; border-top: 1px solid #f0f0f0; margin: 16px 0; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── API helper ─────────────────────────────────────────────────────────────
+const api = {
+  get:  (p)    => fetch(p).then(r => r.json()),
+  post: (p, b) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()),
+  put:  (p, b) => fetch(p, { method: 'PUT',  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()),
+};
+
+// ── Toast hook ─────────────────────────────────────────────────────────────
+function useToast() {
+  const [toast, setToast] = useState(null);
+  const show = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3200);
+  }, []);
+  return [toast, show];
+}
+
+// ── Primitive components ───────────────────────────────────────────────────
+function Toast({ toast }) {
+  if (!toast) return null;
+  return <div className={`toast toast-${toast.type}`}>{toast.msg}</div>;
+}
+
+function RevealInput({ value, onChange, placeholder = '', disabled = false, className = '' }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="reveal-wrap">
+      <input className={`form-input ${className}`} type={show ? 'text' : 'password'}
+        value={value} onChange={e => onChange(e.target.value)}
+        placeholder={placeholder} disabled={disabled} />
+      <button type="button" className="reveal-btn" onClick={() => setShow(s => !s)}
+        title={show ? 'Hide' : 'Show'}>{show ? '🙈' : '👁'}</button>
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange, label }) {
+  return (
+    <div className="toggle-wrap">
+      <label className="toggle">
+        <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+        <span className="toggle-slider" />
+      </label>
+      {label && <span style={{ fontSize: 13 }}>{label}</span>}
+    </div>
+  );
+}
+
+function StatusDot({ running }) {
+  return <span className={`dot ${running ? 'dot-green' : 'dot-red'}`} />;
+}
+
+// ── Header ─────────────────────────────────────────────────────────────────
+function Header({ bridge, onStart, onStop, starting }) {
+  return (
+    <header className="header">
+      <span className="header-title">⚡ JAM OData MCP Bridge — Configurator</span>
+      <div className="bridge-status">
+        <StatusDot running={bridge.running} />
+        <span>{bridge.running ? `Bridge running  PID ${bridge.pid}` : 'Bridge stopped'}</span>
+      </div>
+      {bridge.running
+        ? <button className="btn btn-danger btn-sm" onClick={onStop}>■ Stop</button>
+        : <button className="btn btn-success btn-sm" onClick={onStart} disabled={starting}>
+            {starting ? '…' : '▶ Start'}
+          </button>
+      }
+    </header>
+  );
+}
+
+// ── ServiceModal ───────────────────────────────────────────────────────────
+function ServiceModal({ service, onSave, onClose }) {
+  const [form, setForm] = useState(service || {
+    alias: '', url: '', username: '${ODATA_USERNAME}', password: '${ODATA_PASSWORD}', passthrough: true
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const valid = form.alias.trim() && form.url.trim();
+
+  return (
+    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">{service ? 'Edit Service' : 'Add Service'}</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Alias <span className="req">*</span></label>
+          <input className="form-input" value={form.alias} onChange={e => set('alias', e.target.value)} placeholder="e.g. sales_order" />
+          <div className="hint">Tool prefix: <code>{form.alias || 'alias'}_filter_Orders</code></div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">OData URL <span className="req">*</span></label>
+          <input className="form-input" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://host/sap/opu/odata4/..." />
+        </div>
+
+        <div className="grid-2">
+          <div className="form-group">
+            <label className="form-label">Username</label>
+            <input className="form-input" value={form.username} onChange={e => set('username', e.target.value)} placeholder="${ODATA_USERNAME}" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <RevealInput value={form.password} onChange={v => set('password', v)} placeholder="${ODATA_PASSWORD}" />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Passthrough Auth</label>
+          <Toggle checked={!!form.passthrough} onChange={v => set('passthrough', v)}
+            label="Forward caller's Authorization header to OData" />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Read-only</label>
+          <Toggle checked={!!form.readonly} onChange={v => set('readonly', v)}
+            label="Expose only read tools (filter, count, get)" />
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={() => onSave(form)} disabled={!valid}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ProbePanel ─────────────────────────────────────────────────────────────
+function ProbePanel({ data, service, onSave }) {
+  const allEs   = data.entity_sets || [];
+  const allActs = data.actions || [];
+  const [selEs,  setSelEs]  = useState(null);
+  const [selAct, setSelAct] = useState(null);
+
+  // Track which entities/actions are "new" (in probe but not in saved filter)
+  const savedEs   = new Set(service.include          || []);
+  const savedActs = new Set(service.include_actions  || []);
+  const hasEsFilter  = !!(service.include?.length);
+  const hasActFilter = !!(service.include_actions?.length);
+
+  useEffect(() => {
+    setSelEs(new Set(service.include?.length     ? service.include          : allEs.map(e => e.name)));
+    setSelAct(new Set(service.include_actions?.length ? service.include_actions : allActs));
+  }, [data]);
+
+  if (!selEs || !selAct) return null;
+
+  const toggleEs  = n => setSelEs(s  => { const x = new Set(s);  x.has(n) ? x.delete(n) : x.add(n);  return x; });
+  const toggleAct = n => setSelAct(s => { const x = new Set(s);  x.has(n) ? x.delete(n) : x.add(n);  return x; });
+
+  const handleSave = () => {
+    const incEs  = selEs.size  === allEs.length  && allEs.every(e => selEs.has(e.name)) ? null : [...selEs];
+    const incAct = selAct.size === allActs.length && allActs.every(a => selAct.has(a))  ? null : [...selAct];
+    onSave({ include: incEs, include_actions: incAct });
+  };
+
+  return (
+    <div className="probe-panel">
+      {allEs.length > 0 && (
+        <div className="probe-section">
+          <div className="probe-section-title" style={{ display:'flex', justifyContent:'space-between' }}>
+            <span>Entity Sets ({selEs.size}/{allEs.length})</span>
+            <span style={{ display:'flex', gap:8 }}>
+              <span style={{ cursor:'pointer', color:'#0a6ed1', fontSize:11 }}
+                onClick={() => setSelEs(new Set(allEs.map(e => e.name)))}>all</span>
+              <span style={{ cursor:'pointer', color:'#0a6ed1', fontSize:11 }}
+                onClick={() => setSelEs(new Set())}>none</span>
+            </span>
+          </div>
+          {allEs.map(es => {
+            const isNew = hasEsFilter && !savedEs.has(es.name);
+            return (
+              <div key={es.name} className="checkbox-row">
+                <input type="checkbox" checked={selEs.has(es.name)} onChange={() => toggleEs(es.name)} id={`es_${es.name}`} />
+                <label htmlFor={`es_${es.name}`} style={{ cursor:'pointer', flex:1 }}>
+                  <strong>{es.name}</strong>
+                  {isNew && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#fff',
+                    background: '#0a6ed1', borderRadius: 3, padding: '1px 5px', verticalAlign: 'middle' }}>NEW</span>}
+                  <span className="field-meta">
+                    {es.keys?.length ? ` keys:[${es.keys.join(',')}]` : ''}
+                    {es.prop_count   ? ` · ${es.prop_count} props`    : ''}
+                  </span>
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {allActs.length > 0 && (
+        <div className="probe-section">
+          <div className="probe-section-title" style={{ display:'flex', justifyContent:'space-between' }}>
+            <span>Actions ({selAct.size}/{allActs.length})</span>
+            <span style={{ display:'flex', gap:8 }}>
+              <span style={{ cursor:'pointer', color:'#0a6ed1', fontSize:11 }}
+                onClick={() => setSelAct(new Set(allActs))}>all</span>
+              <span style={{ cursor:'pointer', color:'#0a6ed1', fontSize:11 }}
+                onClick={() => setSelAct(new Set())}>none</span>
+            </span>
+          </div>
+          {allActs.map(act => {
+            const isNew = hasActFilter && !savedActs.has(act);
+            return (
+              <div key={act} className="checkbox-row">
+                <input type="checkbox" checked={selAct.has(act)} onChange={() => toggleAct(act)} id={`act_${act}`} />
+                <label htmlFor={`act_${act}`} style={{ cursor:'pointer' }}>
+                  {act}
+                  {isNew && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#fff',
+                    background: '#0a6ed1', borderRadius: 3, padding: '1px 5px', verticalAlign: 'middle' }}>NEW</span>}
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button className="btn btn-primary btn-sm" onClick={handleSave}>💾 Save Filter</button>
+    </div>
+  );
+}
+
+// ── ServicesTab ────────────────────────────────────────────────────────────
+function ServicesTab({ services, onSave, showToast, bridge, tools = [] }) {
+  const [modal,         setModal]         = useState(null);
+  const [probeData,     setProbeData]     = useState({});
+  const [probeLoading,  setProbeLoading]  = useState(new Set());
+  const [openProbe,     setOpenProbe]     = useState(new Set());
+  const [restartNeeded, setRestartNeeded] = useState(false);
+  const [cfApp,         setCfApp]         = useState(null);
+  const [cfAppLoading,  setCfAppLoading]  = useState(false);
+  const [btpHealth,     setBtpHealth]     = useState(null);
+  const [btpLoading,    setBtpLoading]    = useState(false);
+
+  const fetchCfApp = () => {
+    setCfAppLoading(true);
+    api.get('/api/cf/app').then(d => { setCfApp(d); setCfAppLoading(false); });
+  };
+
+  const fetchBtpHealth = () => {
+    setBtpLoading(true);
+    api.get('/api/btp/health').then(d => { setBtpHealth(d); setBtpLoading(false); });
+  };
+
+  const refreshAll = () => { fetchCfApp(); fetchBtpHealth(); };
+
+  useEffect(() => { fetchCfApp(); fetchBtpHealth(); }, []);
+
+  const handleProbe = async svc => {
+    setProbeLoading(s => { const n = new Set(s); n.add(svc.alias); return n; });
+    const result = await api.post('/api/probe', svc);
+    setProbeData(d => ({ ...d, [svc.alias]: result }));
+    if (result.success) {
+      setOpenProbe(s => { const n = new Set(s); n.add(svc.alias); return n; });
+    } else {
+      showToast(`Probe failed: ${result.error}`, 'error');
+    }
+    setProbeLoading(s => { const n = new Set(s); n.delete(svc.alias); return n; });
+  };
+
+  const handleSaveFilter = async (idx, filter) => {
+    const updated = services.map((s, i) => {
+      if (i !== idx) return s;
+      const n = { ...s };
+      if (filter.include === null)         delete n.include;
+      else                                 n.include = filter.include;
+      if (filter.include_actions === null) delete n.include_actions;
+      else                                 n.include_actions = filter.include_actions;
+      return n;
+    });
+    await api.put('/api/services', updated);
+    onSave();
+    showToast('Filter saved');
+    if (bridge?.running) setRestartNeeded(true);
+  };
+
+  const handleDelete = async idx => {
+    if (!confirm('Delete this service?')) return;
+    await api.put('/api/services', services.filter((_, i) => i !== idx));
+    onSave();
+    showToast('Service deleted');
+  };
+
+  const handleModalSave = async data => {
+    const { index } = modal;
+    const next = index === -1 ? [...services, data] : services.map((s, i) => i === index ? { ...s, ...data } : s);
+    await api.put('/api/services', next);
+    setModal(null);
+    onSave();
+    showToast(index === -1 ? 'Service added' : 'Service updated');
+  };
+
+  const toggleProbe = alias => {
+    setOpenProbe(s => { const n = new Set(s); n.has(alias) ? n.delete(alias) : n.add(alias); return n; });
+  };
+
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', marginBottom: 20 }}>
+        <h2 className="section-title" style={{ margin: 0, flex: 1 }}>OData Services</h2>
+        <button className="btn btn-primary" onClick={() => setModal({ index: -1, data: null })}>+ Add Service</button>
+      </div>
+
+      {/* CF App Status */}
+      <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid #107e3e' }}>
+        <div className="card-header">
+          <span className="card-title">☁️ Deployed App — jam-odata-mcp-bridge</span>
+          <button className="btn btn-secondary btn-sm" onClick={refreshAll} disabled={cfAppLoading || btpLoading}>
+            {(cfAppLoading || btpLoading) ? '⏳' : '↻ Refresh'}
+          </button>
+        </div>
+        {cfApp === null ? (
+          <p style={{ fontSize: 13, color: '#6a6d70' }}>Checking CF…</p>
+        ) : !cfApp.ok && cfApp.deployed === false ? (
+          <div style={{ display:'flex', alignItems:'center', gap: 10 }}>
+            <span className="dot dot-orange" />
+            <span style={{ fontSize: 13, color: '#6a4d20' }}>App not yet deployed to BTP. Use the Deploy tab to push it.</span>
+          </div>
+        ) : !cfApp.ok ? (
+          <div style={{ display:'flex', alignItems:'center', gap: 10 }}>
+            <span className="dot dot-red" />
+            <span style={{ fontSize: 13, color: '#bb0000' }}>{cfApp.output?.split('\n')[0] || 'Not logged in to CF — go to Deploy tab to log in.'}</span>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ display:'flex', alignItems:'center', gap: 8 }}>
+                <span className={`dot ${cfApp.state?.toLowerCase() === 'started' ? 'dot-green' : 'dot-red'}`} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{cfApp.state || 'unknown'}</span>
+              </div>
+              {cfApp.routes && (
+                <div style={{ fontSize: 13 }}>
+                  🔗 <a href={`https://${cfApp.routes}`} target="_blank" rel="noopener noreferrer"
+                       style={{ color: '#0a6ed1' }}>https://{cfApp.routes}</a>
+                </div>
+              )}
+              {cfApp.instances && <div style={{ fontSize: 13, color: '#6a6d70' }}>📦 {cfApp.instances}</div>}
+              {cfApp.memory    && <div style={{ fontSize: 13, color: '#6a6d70' }}>💾 {cfApp.memory}</div>}
+            </div>
+
+            {/* BTP live services */}
+            {btpHealth && (
+              <div style={{ borderTop: '1px solid #e8e8e8', paddingTop: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#32363a', marginBottom: 8 }}>
+                  Live in BTP
+                  {btpHealth.ok && btpHealth.tools !== undefined && (
+                    <span style={{ fontWeight: 400, color: '#6a6d70', marginLeft: 8 }}>{btpHealth.tools} tools</span>
+                  )}
+                </div>
+                {btpHealth.ok ? (() => {
+                  const localAliases = new Set(services.map(s => s.alias));
+                  const btpSvcs = btpHealth.services || [];
+                  const btpSet  = new Set(btpSvcs);
+                  const allAliases = [...new Set([...btpSvcs, ...services.map(s => s.alias)])];
+                  return (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {allAliases.map(alias => {
+                        const inBtp   = btpSet.has(alias);
+                        const inLocal = localAliases.has(alias);
+                        const color   = inBtp && inLocal ? '#107e3e'
+                                      : inBtp ? '#e9730c'   // in BTP but not local config
+                                      : '#bb0000';          // in local but not BTP (needs deploy)
+                        const bg      = inBtp && inLocal ? '#f0faf4'
+                                      : inBtp ? '#fff8f0'
+                                      : '#fff3f3';
+                        const tip     = inBtp && inLocal ? 'Running in BTP • matches local config'
+                                      : inBtp ? 'Running in BTP but not in local services.json'
+                                      : 'In local config but NOT in deployed BTP app — redeploy to sync';
+                        return (
+                          <span key={alias} title={tip} style={{
+                            fontSize: 12, padding: '3px 10px', borderRadius: 4,
+                            background: bg, color, border: `1px solid ${color}40`,
+                            fontFamily: 'monospace', fontWeight: 600, cursor: 'default',
+                          }}>
+                            {inBtp ? '✓' : '✕'} {alias}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  );
+                })() : (
+                  <span style={{ fontSize: 12, color: '#bb0000' }}>
+                    {btpLoading ? '⏳ Fetching…' : `⚠️ ${btpHealth.error || 'Could not reach BTP app'}`}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {restartNeeded && (
+        <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', marginBottom:16,
+                      background:'#fff8f0', border:'1px solid #f5d0a0', borderRadius:6 }}>
+          <span style={{ fontSize:13, color:'#6a4d20', flex:1 }}>
+            ⚠️ Filter saved. <strong>Restart the MCP bridge</strong> (Test Tools tab) to apply the new entity selection.
+          </span>
+          <button className="btn btn-secondary btn-sm" onClick={() => setRestartNeeded(false)}>Dismiss</button>
+        </div>
+      )}
+
+      {services.length === 0 ? (
+        <div className="empty">
+          <div className="empty-icon">🔌</div>
+          <div className="empty-text">No services configured. Add one to get started.</div>
+        </div>
+      ) : services.map((svc, idx) => {
+        const probe      = probeData[svc.alias];
+        const isOpen     = openProbe.has(svc.alias);
+        const toolsForSvc = tools.filter(t => t.name.startsWith(svc.alias + '_') || t.name.startsWith(svc.alias + '-'));
+        const toolCount  = toolsForSvc.length;
+        return (
+          <div key={idx} className="card service-card">
+            <div className="card-header">
+              <span className="badge badge-blue" style={{ fontFamily:'monospace' }}>{svc.alias}</span>
+              {bridge?.running && toolCount > 0  && <span className="badge badge-green" title={toolsForSvc.map(t=>t.name).join(', ')}>⚡ {toolCount} tools live</span>}
+              {bridge?.running && toolCount === 0 && <span className="badge badge-red" title="Bridge is running but no tools loaded for this service — check URL / credentials">⚠ not loaded</span>}
+              {svc.passthrough && <span className="badge badge-orange">passthrough</span>}
+              {svc.readonly    && <span className="badge badge-gray">read-only</span>}
+              {svc.include     && <span className="badge badge-green">{svc.include.length} entities</span>}
+              {svc.include_actions && <span className="badge badge-green">{svc.include_actions.length} actions</span>}
+            </div>
+
+            <div className="service-url">{svc.url}</div>
+
+            <div className="service-actions">
+              <button className="btn btn-ghost btn-sm" onClick={() => handleProbe(svc)}
+                disabled={probeLoading.has(svc.alias)}>
+                {probeLoading.has(svc.alias) ? '⏳ Probing…' : '🔍 Probe Metadata'}
+              </button>
+              {probe?.success && (
+                <button className="btn btn-secondary btn-sm" onClick={() => toggleProbe(svc.alias)}>
+                  {isOpen ? '▲ Hide Filter' : '▼ Filter'} ({probe.entity_sets?.length || 0} sets · {probe.actions?.length || 0} actions)
+                </button>
+              )}
+              <button className="btn btn-secondary btn-sm" onClick={() => setModal({ index: idx, data: svc })}>✏️ Edit</button>
+              <button className="btn btn-danger btn-sm" onClick={() => handleDelete(idx)}>🗑 Delete</button>
+            </div>
+
+            {probe && !probe.success && (
+              <div style={{ marginTop: 10, background: '#fff3f3', border: '1px solid #f5c0c0',
+                            borderRadius: 6, padding: '10px 14px' }}>
+                <div style={{ color: '#bb0000', fontWeight: 600, marginBottom: 4 }}>❌ Probe failed</div>
+                <div style={{ fontSize: 13, color: '#32363a' }}>{probe.error}</div>
+                {probe.hint === 'dns' && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#6a4d20', background: '#fff8f0',
+                                borderLeft: '3px solid #e9730c', padding: '6px 10px', borderRadius: '0 4px 4px 0' }}>
+                    💡 <strong>Tip:</strong> This is an internal hostname. Connect to VPN and try again.
+                  </div>
+                )}
+                {probe.hint === 'timeout' && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#6a4d20', background: '#fff8f0',
+                                borderLeft: '3px solid #e9730c', padding: '6px 10px', borderRadius: '0 4px 4px 0' }}>
+                    💡 <strong>Tip:</strong> Connection timed out — check VPN, firewall, or the port number in the URL.
+                  </div>
+                )}
+                {probe.hint === 'http' && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#6a4d20', background: '#fff8f0',
+                                borderLeft: '3px solid #e9730c', padding: '6px 10px', borderRadius: '0 4px 4px 0' }}>
+                    💡 <strong>Tip:</strong> Go to the <strong>Credentials</strong> tab and verify ODATA_USERNAME / ODATA_PASSWORD.
+                  </div>
+                )}
+              </div>
+            )}
+            {isOpen && probe?.success && (
+              <ProbePanel data={probe} service={svc} onSave={f => handleSaveFilter(idx, f)} />
+            )}
+          </div>
+        );
+      })}
+
+      {modal && (
+        <ServiceModal service={modal.data} onSave={handleModalSave} onClose={() => setModal(null)} />
+      )}
+    </div>
+  );
+}
+
+// ── CredentialsTab ─────────────────────────────────────────────────────────
+function CredField({ label, k, hint, pw, form, set }) {
+  return (
+    <div className="form-group">
+      <label className="form-label">{label}</label>
+      {pw
+        ? <RevealInput value={form[k] || ''} onChange={v => set(k, v)} placeholder={k} />
+        : <input className="form-input" value={form[k] || ''} onChange={e => set(k, e.target.value)} placeholder={k} />
+      }
+      {hint && <div className="hint">{hint}</div>}
+    </div>
+  );
+}
+
+function CredentialsTab({ credentials, onSave, showToast }) {
+  const [form, setForm] = useState(credentials);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setForm(credentials), [credentials]);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    await api.put('/api/credentials', form);
+    onSave();
+    showToast('Credentials saved');
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <div className="card">
+        <div className="section-title">OData Service Credentials</div>
+        <CredField label="ODATA_USERNAME" k="ODATA_USERNAME" hint="SAP username — used in services.json as ${ODATA_USERNAME}" form={form} set={set} />
+        <CredField label="ODATA_PASSWORD" k="ODATA_PASSWORD" hint="SAP password" pw form={form} set={set} />
+      </div>
+      <div className="card">
+        <div className="section-title">MCP Gateway Credentials (optional)</div>
+        <p style={{ fontSize: 13, color: '#6a6d70', marginBottom: 16 }}>
+          Protect the <code>/mcp</code> endpoint with Basic Auth. Leave empty for open access.
+        </p>
+        <CredField label="MCP_USERNAME" k="MCP_USERNAME" hint="MCP endpoint username" form={form} set={set} />
+        <CredField label="MCP_PASSWORD" k="MCP_PASSWORD" hint="MCP endpoint password" pw form={form} set={set} />
+      </div>
+      <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+        {saving ? 'Saving…' : '💾 Save Credentials'}
+      </button>
+    </div>
+  );
+}
+
+// ── ToolForm ───────────────────────────────────────────────────────────────
+function ToolForm({ tool, args, setArgs }) {
+  if (!tool) return null;
+  const props    = tool.inputSchema?.properties || {};
+  const required = tool.inputSchema?.required   || [];
+  const set = (k, v) => setArgs(a => ({ ...a, [k]: v }));
+
+  if (Object.keys(props).length === 0) {
+    return <p style={{ fontSize: 13, color: '#6a6d70', marginBottom: 12 }}>No input parameters.</p>;
+  }
+
+  return (
+    <div>
+      {Object.entries(props).map(([name, prop]) => {
+        const isReq = required.includes(name);
+        const type  = prop.type || 'string';
+        return (
+          <div key={name} className="form-group">
+            <label className="form-label">
+              {name}
+              {isReq && <span className="req"> *</span>}
+              <span className="field-meta"> ({type})</span>
+            </label>
+            {prop.description && prop.description !== name && (
+              <div className="hint" style={{ marginBottom: 4 }}>{prop.description}</div>
+            )}
+            {type === 'boolean' ? (
+              <Toggle checked={!!args[name]} onChange={v => set(name, v)} label={`true`} />
+            ) : (type === 'integer' || type === 'number') ? (
+              <input className="form-input" type="number"
+                value={args[name] ?? ''}
+                onChange={e => set(name, e.target.value === '' ? undefined : Number(e.target.value))}
+                placeholder={prop.description || name} />
+            ) : (
+              <input className="form-input" type="text"
+                value={args[name] ?? ''}
+                onChange={e => set(name, e.target.value)}
+                placeholder={prop.description || name} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TestToolsTab ───────────────────────────────────────────────────────────
+function TestToolsTab({ tools, bridge, onBridgeChange, onToolsRefresh, showToast, mcpPort }) {
+  const [search,    setSearch]    = useState('');
+  const [selected,  setSelected]  = useState(null);
+  const [args,      setArgs]      = useState({});
+  const [auth,      setAuth]      = useState('');
+  const [result,    setResult]    = useState(null);
+  const [calling,   setCalling]   = useState(false);
+  const [starting,  setStarting]  = useState(false);
+  const [copied,    setCopied]    = useState(false);
+  const [bridgeLogs, setBridgeLogs] = useState([]);
+  const [showLogs,  setShowLogs]  = useState(false);
+  const logsRef = useRef(null);
+
+  useEffect(() => {
+    if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight;
+  }, [bridgeLogs]);
+
+  const fetchBridgeLogs = () =>
+    api.get('/api/bridge/logs').then(d => setBridgeLogs(d.logs || []));
+
+  const filtered = tools.filter(t =>
+    t.name.toLowerCase().includes(search.toLowerCase()) ||
+    (t.description || '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  const selectTool = t => { setSelected(t); setArgs({}); setResult(null); };
+
+  const handleCall = async () => {
+    if (!selected) return;
+    const cleanArgs = Object.fromEntries(
+      Object.entries(args).filter(([, v]) => v !== undefined && v !== '')
+    );
+    setCalling(true);
+    const res = await api.post('/api/tools/call', { name: selected.name, arguments: cleanArgs, auth });
+    setResult(res);
+    setCalling(false);
+  };
+
+  const handleStart = async () => {
+    setStarting(true);
+    setBridgeLogs([]);
+    setShowLogs(false);
+    const res = await api.post('/api/bridge/start', {});
+    if (res.ok) {
+      showToast(`Bridge started (PID ${res.pid})`);
+      // Poll quickly 3 times to confirm bridge stays up
+      let attempts = 0;
+      const poll = () => {
+        attempts++;
+        api.get('/api/bridge/status').then(s => {
+          onBridgeChange();
+          if (!s.running && attempts <= 3) {
+            // Bridge died — fetch logs and surface them
+            fetchBridgeLogs().then(() => setShowLogs(true));
+            showToast('Bridge stopped unexpectedly — see logs below', 'error');
+          } else if (s.running && attempts === 1) {
+            setTimeout(poll, 1500);
+          } else if (s.running && attempts === 2) {
+            // Still running — load tools
+            onToolsRefresh();
+          }
+        });
+      };
+      setTimeout(poll, 800);
+    } else {
+      showToast(res.error || 'Failed to start bridge', 'error');
+    }
+    setStarting(false);
+  };
+
+  const handleStop = async () => {
+    await api.post('/api/bridge/stop', {});
+    onBridgeChange();
+    showToast('Bridge stopped');
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(getDisplay());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const getDisplay = () => {
+    if (!result) return '';
+    try {
+      const text = result?.result?.content?.[0]?.text;
+      if (text) return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {}
+    return JSON.stringify(result, null, 2);
+  };
+
+  return (
+    <div>
+      {/* Bridge control bar */}
+      <div className="bridge-bar">
+        <StatusDot running={bridge.running} />
+        <div className="bridge-info">
+          <div className="bridge-status-text">
+            {bridge.running ? `MCP Bridge running on port ${mcpPort}` : 'MCP Bridge is not running'}
+          </div>
+          {bridge.pid && <div className="bridge-pid">PID: {bridge.pid}</div>}
+        </div>
+        {bridge.running
+          ? <>
+              <button className="btn btn-danger btn-sm" onClick={handleStop}>■ Stop</button>
+              <button className="btn btn-secondary btn-sm" onClick={onToolsRefresh}>↻ Refresh Tools</button>
+            </>
+          : <button className="btn btn-success btn-sm" onClick={handleStart} disabled={starting}>
+              {starting ? '⏳ Starting…' : '▶ Start Bridge'}
+            </button>
+        }
+      </div>
+
+      {!bridge.running && (
+        <div className="warning-banner">
+          Start the MCP bridge to load and test tools. The bridge reads <code>services.json</code> and connects to your OData endpoints.
+        </div>
+      )}
+
+      {/* Bridge startup log (shown when bridge fails to start or on demand) */}
+      {bridgeLogs.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:'#6a6d70', textTransform:'uppercase', letterSpacing:'.5px' }}>
+              Bridge Startup Log
+            </span>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowLogs(s => !s)}>
+              {showLogs ? '▲ Hide' : '▼ Show'}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={fetchBridgeLogs}>↻</button>
+          </div>
+          {showLogs && (
+            <div className="log-panel" ref={logsRef} style={{ maxHeight: 200 }}>
+              {bridgeLogs.map((l, i) => (
+                <div key={i} className={`log-line ${l.includes('ERROR') || l.includes('Traceback') ? 'log-err' : ''}`}>{l}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {bridge.running && tools.length === 0 && (
+        <div className="warning-banner">
+          No tools discovered. Check that your services are reachable (use the Probe button in Services tab).
+          <button className="btn btn-secondary btn-sm" style={{ marginLeft: 12 }} onClick={onToolsRefresh}>↻ Retry</button>
+        </div>
+      )}
+
+      {tools.length > 0 && (
+        <div className="two-col">
+          {/* Left: tool selector */}
+          <div>
+            <div className="section-title">{tools.length} Tools</div>
+            <input className="search-input" placeholder="🔍  Search tools…"
+              value={search} onChange={e => setSearch(e.target.value)} />
+            <div className="tool-list">
+              {filtered.map(t => (
+                <div key={t.name} className={`tool-item ${selected?.name === t.name ? 'selected' : ''}`}
+                  onClick={() => selectTool(t)}>
+                  <div className="tool-name">{t.name}</div>
+                  <div className="tool-desc">{t.description}</div>
+                </div>
+              ))}
+              {filtered.length === 0 && (
+                <div style={{ padding: 16, color: '#6a6d70', textAlign: 'center', fontSize: 13 }}>No tools match</div>
+              )}
+            </div>
+          </div>
+
+          {/* Right: form + result */}
+          <div>
+            {!selected ? (
+              <div className="empty" style={{ paddingTop: 40 }}>
+                <div style={{ fontSize: 40 }}>←</div>
+                <div className="empty-text" style={{ marginTop: 8 }}>Select a tool to test it</div>
+              </div>
+            ) : (
+              <>
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-header">
+                    <code style={{ color: '#0a6ed1', fontSize: 14, fontWeight: 700 }}>{selected.name}</code>
+                  </div>
+                  <p style={{ fontSize: 13, color: '#6a6d70', marginBottom: 16 }}>{selected.description}</p>
+
+                  <ToolForm tool={selected} args={args} setArgs={setArgs} />
+
+                  <hr />
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">
+                      Authorization Header
+                      <span className="field-meta"> (for passthrough auth testing)</span>
+                    </label>
+                    <RevealInput value={auth} onChange={setAuth} placeholder="Basic dXNlcjpwYXNz" />
+                  </div>
+                </div>
+
+                <button className="btn btn-primary" style={{ marginBottom: 16, width: '100%' }}
+                  onClick={handleCall} disabled={calling || !bridge.running}>
+                  {calling ? '⏳ Calling…' : '▶ Call Tool'}
+                </button>
+
+                {result && (
+                  <div className="response-panel">
+                    <button className="response-copy" onClick={handleCopy}>
+                      {copied ? '✓ Copied' : 'Copy'}
+                    </button>
+                    <pre className="json">{getDisplay()}</pre>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── DeployTab ──────────────────────────────────────────────────────────────
+function DeployTab({ showToast }) {
+  // CF Login form
+  const [loginForm,    setLoginForm]    = useState({ api: 'https://api.cf.eu10.hana.ondemand.com', username: '', password: '', org: '', space: '' });
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginRes,     setLoginRes]     = useState(null);   // raw server response
+
+  // Checklist
+  const [checklist,    setChecklist]    = useState(null);
+  const [checkLoading, setCheckLoading] = useState(false);
+
+  // Deploy
+  const [deploying,  setDeploying]  = useState(false);
+  const [logs,       setLogs]       = useState([]);
+  const [exitCode,   setExitCode]   = useState(null);
+  const logRef      = useRef(null);
+  const loginLogRef = useRef(null);
+
+  const setLF = (k, v) => setLoginForm(f => ({ ...f, [k]: v }));
+
+  const fetchChecklist = () => {
+    setCheckLoading(true);
+    api.get('/api/cf/checklist').then(d => { setChecklist(d); setCheckLoading(false); });
+  };
+
+  useEffect(() => { fetchChecklist(); }, []);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+
+  useEffect(() => {
+    if (loginLogRef.current) loginLogRef.current.scrollTop = loginLogRef.current.scrollHeight;
+  }, [loginRes]);
+
+  const handleLogin = async () => {
+    if (!loginForm.api || !loginForm.username || !loginForm.password) {
+      showToast('API endpoint, username and password are required', 'error');
+      return;
+    }
+    setLoginLoading(true);
+    setLoginRes({ output: '⏳ Connecting to CF — this may take 20–60 seconds…' });
+    try {
+      const res = await api.post('/api/cf/login', loginForm);
+      // Enrich output with returncode for debugging
+      const rc = res.returncode !== undefined ? `\n\n[exit code: ${res.returncode}]` : '';
+      setLoginRes({ ...res, output: (res.output || '(server returned no output)') + rc });
+      if (res.ok) {
+        showToast('Logged in to CF ✓');
+        fetchChecklist();
+      } else {
+        showToast('CF login failed — see output below', 'error');
+      }
+    } catch (e) {
+      setLoginRes({ output: `Network / server error: ${e.message}\n\nMake sure the configurator is running with the latest code (restart it).` });
+      showToast('Could not reach configurator backend', 'error');
+    }
+    setLoginLoading(false);
+  };
+
+  const handleLogout = async () => {
+    const res = await api.post('/api/cf/logout', {});
+    showToast(res.ok ? 'Logged out from CF' : (res.output || 'Logout failed'));
+    fetchChecklist();
+  };
+
+  const handleDeploy = () => {
+    if (!checklist?.logged_in?.ok) {
+      showToast('Log in to CF first', 'error');
+      return;
+    }
+    setLogs([]);
+    setExitCode(null);
+    setDeploying(true);
+    const es = new EventSource('/api/deploy');
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.line !== undefined) setLogs(l => [...l, d.line]);
+      if (d.exit !== undefined) {
+        setExitCode(d.exit);
+        setDeploying(false);
+        es.close();
+        fetchChecklist();
+        if (d.exit === 0) showToast('Deployment successful! 🚀');
+        else showToast('Deployment failed — check logs below', 'error');
+      }
+    };
+    es.onerror = () => {
+      setLogs(l => [...l, 'ERROR: Connection to deploy stream lost']);
+      setDeploying(false); setExitCode(1); es.close();
+    };
+  };
+
+  const loggedIn   = checklist?.logged_in?.ok;
+  const targetOut  = checklist?.logged_in?.detail || '';
+
+  // Parse org/space from cf target output for display
+  const cfOrg   = targetOut.match(/org:\s+(.+)/)?.[1]?.trim()   || '';
+  const cfSpace = targetOut.match(/space:\s+(.+)/)?.[1]?.trim() || '';
+  const cfApi   = targetOut.match(/api endpoint:\s+(.+)/i)?.[1]?.trim() || '';
+  const cfUser  = targetOut.match(/user:\s+(.+)/)?.[1]?.trim()  || '';
+
+  const checks = checklist ? [
+    { label: 'CF CLI installed',              ok: checklist.cli?.ok,
+      detail: checklist.cli?.detail },
+    { label: 'Logged in to Cloud Foundry',    ok: checklist.logged_in?.ok,
+      detail: loggedIn ? `${cfUser}  ·  ${cfOrg} / ${cfSpace}` : 'Not logged in' },
+    { label: 'credentials.mtaext saved',      ok: checklist.creds?.ok,
+      detail: checklist.creds?.detail },
+    { label: 'Services configured',           ok: checklist.services?.ok,
+      detail: checklist.services?.detail },
+    { label: 'App deployed & running in BTP', ok: checklist.app?.ok,
+      detail: checklist.app?.routes
+                ? `https://${checklist.app.routes}  (${checklist.app.state})`
+                : checklist.app?.deployed === false
+                  ? 'Not yet deployed'
+                  : checklist.app?.state || '' },
+  ] : [];
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+
+      {/* ── CF Login ──────────────────────────────────────────────── */}
+      <div className="card" style={{ borderTop: '4px solid #0a6ed1', marginBottom: 20 }}>
+        <div className="card-header">
+          <span className="card-title" style={{ fontSize: 17, fontWeight: 700 }}>☁️ Cloud Foundry Login</span>
+          {loggedIn && (
+            <button className="btn btn-danger btn-sm" onClick={handleLogout}>Logout</button>
+          )}
+        </div>
+
+        {loggedIn ? (
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap: 8, marginBottom: 10 }}>
+              <span className="dot dot-green" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#107e3e' }}>Logged in</span>
+              <button className="btn btn-secondary btn-sm" style={{ marginLeft: 'auto' }} onClick={fetchChecklist} disabled={checkLoading}>
+                {checkLoading ? '⏳' : '↻ Refresh'}
+              </button>
+            </div>
+            <div style={{ display:'flex', gap: 24, flexWrap:'wrap', fontSize: 13, color: '#32363a' }}>
+              {cfUser  && <span>👤 {cfUser}</span>}
+              {cfApi   && <span>🔗 {cfApi}</span>}
+              {cfOrg   && <span>🏢 {cfOrg}</span>}
+              {cfSpace && <span>📁 {cfSpace}</span>}
+            </div>
+            {(!cfOrg || !cfSpace) && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#e9730c', background: '#fff8f0',
+                borderLeft: '3px solid #e9730c', padding: '6px 10px', borderRadius: '0 4px 4px 0' }}>
+                ⚠️ No org/space targeted. Re-login with <strong>Org</strong> and <strong>Space</strong> filled in, or run
+                <code style={{ margin: '0 4px', background: '#f0f0f0', padding: '1px 4px', borderRadius: 3 }}>cf target -o ORG -s SPACE</code>
+                in your terminal, then <strong>↻ Refresh status</strong>.
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="grid-2">
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="form-label">CF API Endpoint <span className="req">*</span></label>
+                <input className="form-input" value={loginForm.api}
+                  onChange={e => setLF('api', e.target.value)}
+                  placeholder="https://api.cf.eu10.hana.ondemand.com" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Username <span className="req">*</span></label>
+                <input className="form-input" value={loginForm.username}
+                  onChange={e => setLF('username', e.target.value)}
+                  placeholder="user@example.com" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Password <span className="req">*</span></label>
+                <RevealInput value={loginForm.password} onChange={v => setLF('password', v)} placeholder="••••••••" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Org <span style={{ fontSize:11, color:'#9a9a9a' }}>(optional)</span></label>
+                <input className="form-input" value={loginForm.org}
+                  onChange={e => setLF('org', e.target.value)}
+                  placeholder="my-org" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Space <span style={{ fontSize:11, color:'#9a9a9a' }}>(optional)</span></label>
+                <input className="form-input" value={loginForm.space}
+                  onChange={e => setLF('space', e.target.value)}
+                  placeholder="dev" />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={handleLogin} disabled={loginLoading}>
+              {loginLoading ? '⏳ Logging in…' : '🔐 Login to CF'}
+            </button>
+          </>
+        )}
+
+        {loginRes && loginRes.output && (
+          <>
+            {loginRes.returncode !== undefined && (
+              <div style={{ marginTop: 10, fontSize: 11, color: loginRes.ok ? '#107e3e' : '#bb0000', fontWeight: 600 }}>
+                {loginRes.ok ? '✓ Login succeeded' : `✕ Login failed`} &nbsp;·&nbsp; exit code: {loginRes.returncode}
+              </div>
+            )}
+            <pre ref={loginLogRef} style={{ marginTop: 4, background: '#1e2227', color: '#abb2bf',
+              borderRadius: 6, padding: '10px 14px', fontSize: 12, maxHeight: 200, overflow: 'auto',
+              whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{loginRes.output}</pre>
+          </>
+        )}
+      </div>
+
+      {/* ── Pre-Deploy Checklist ───────────────────────────────────── */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">Pre-Deploy Checklist</span>
+          <button className="btn btn-secondary btn-sm" onClick={fetchChecklist} disabled={checkLoading}>
+            {checkLoading ? '⏳' : '↻ Refresh'}
+          </button>
+        </div>
+        {checks.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#6a6d70' }}>Loading…</p>
+        ) : checks.map((c, i) => (
+          <div key={i} className="checklist-item">
+            <span className={c.ok === true ? 'check-ok' : c.ok === false ? 'check-fail' : 'check-pend'}>
+              {c.ok === true ? '✓' : c.ok === false ? '✕' : '○'}
+            </span>
+            <div style={{ flex: 1 }}>
+              <div>{c.label}</div>
+              {c.detail && <div style={{ fontSize: 11, color: '#6a6d70', marginTop: 2 }}>{c.detail}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Deploy button ─────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+        <button className="btn btn-primary btn-lg" onClick={handleDeploy}
+          disabled={deploying || !loggedIn}>
+          {deploying ? '⏳ Deploying…' : '🚀 Deploy to BTP'}
+        </button>
+        {!loggedIn && <span style={{ fontSize: 13, color: '#6a6d70' }}>Log in to CF first</span>}
+        {exitCode !== null && (
+          <span className={`badge ${exitCode === 0 ? 'badge-green' : 'badge-red'}`}
+            style={{ fontSize: 13, padding: '4px 12px' }}>
+            {exitCode === 0 ? '✓ Success' : `✕ Exit ${exitCode}`}
+          </span>
+        )}
+      </div>
+
+      {/* ── Log stream ────────────────────────────────────────────── */}
+      {(deploying || logs.length > 0) && (
+        <>
+          <div className="section-title">Deploy Log</div>
+          <div className="log-panel" ref={logRef}>
+            {logs.length === 0 && <span style={{ color: '#6a6d70' }}>Starting…</span>}
+            {logs.map((line, i) => (
+              <div key={i} className={`log-line ${line.startsWith('ERROR') ? 'log-err' : ''}`}>{line}</div>
+            ))}
+            {deploying && <span style={{ color: '#e5c07b' }}>▌</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── App ────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab,         setTab]         = useState('services');
+  const [services,    setServices]    = useState([]);
+  const [credentials, setCredentials] = useState({});
+  const [tools,       setTools]       = useState([]);
+  const [bridge,      setBridge]      = useState({ running: false, pid: null });
+  const [starting,    setStarting]    = useState(false);
+  const [mcpPort,     setMcpPort]     = useState(7777);
+  const [toast, showToast] = useToast();
+
+  const fetchServices    = () => api.get('/api/services').then(setServices);
+  const fetchCredentials = () => api.get('/api/credentials').then(setCredentials);
+  const fetchTools       = () => api.get('/api/tools').then(d => setTools(d.tools || []));
+  const checkBridge      = () => api.get('/api/bridge/status').then(setBridge);
+
+  useEffect(() => {
+    fetchServices();
+    fetchCredentials();
+    checkBridge();
+    // Read MCP port from server health
+    api.get('/health').then(d => {}).catch(() => {});
+  }, []);
+
+  // Poll bridge every 3s
+  useEffect(() => {
+    const t = setInterval(checkBridge, 3000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Auto-load tools when switching to tools tab while bridge is up,
+  // OR whenever bridge starts (so Services tab also gets tool counts)
+  useEffect(() => {
+    if (bridge.running) fetchTools();
+    else setTools([]);
+  }, [bridge.running]);
+
+  const handleStart = async () => {
+    setStarting(true);
+    const res = await api.post('/api/bridge/start', {});
+    if (res.ok) {
+      showToast(`Bridge started (PID ${res.pid})`);
+      setTimeout(checkBridge, 600);
+    } else {
+      showToast(res.error || 'Failed to start bridge', 'error');
+    }
+    setStarting(false);
+  };
+
+  const handleStop = async () => {
+    await api.post('/api/bridge/stop', {});
+    checkBridge();
+    showToast('Bridge stopped');
+  };
+
+  const TABS = [
+    { id: 'services',    label: '🔌 Services'    },
+    { id: 'credentials', label: '🔑 Credentials' },
+    { id: 'tools',       label: '🧪 Test Tools'  },
+    { id: 'deploy',      label: '🚀 Deploy'      },
+  ];
+
+  return (
+    <div className="app">
+      <Header bridge={bridge} onStart={handleStart} onStop={handleStop} starting={starting} />
+      <nav className="tabs">
+        {TABS.map(t => (
+          <div key={t.id} className={`tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.label}
+          </div>
+        ))}
+      </nav>
+      <div className="content">
+        <div style={{display: tab === 'services'    ? undefined : 'none'}}><ServicesTab    services={services}     onSave={fetchServices}    showToast={showToast} bridge={bridge} tools={tools} /></div>
+        <div style={{display: tab === 'credentials' ? undefined : 'none'}}><CredentialsTab credentials={credentials} onSave={fetchCredentials} showToast={showToast} /></div>
+        <div style={{display: tab === 'tools'       ? undefined : 'none'}}><TestToolsTab   tools={tools} bridge={bridge} mcpPort={mcpPort}
+                                    onBridgeChange={checkBridge} onToolsRefresh={fetchTools} showToast={showToast} tools={tools} /></div>
+        <div style={{display: tab === 'deploy'      ? undefined : 'none'}}><DeployTab showToast={showToast} /></div>
+      </div>
+      <Toast toast={toast} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

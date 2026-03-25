@@ -1,0 +1,17 @@
+---
+applications:
+  - name: jam-odata-mcp-bridge
+    buildpacks:
+      - python_buildpack
+    memory: 256M
+    instances: 1
+    command: python3 server.py
+    health-check-type: http
+    health-check-http-endpoint: /health
+    env:
+      CONFIG_FILE: services.json
+      MCP_PASSTHROUGH: "true"
+      PORT: "8080"
+    services:
+      - jam-odata-mcp-connectivity
+      - jam-odata-mcp-destination

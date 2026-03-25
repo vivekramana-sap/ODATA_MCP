@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(zip -r ../jam-odata-mcp-bridge.zip . --exclude \"*.mtar\" --exclude \".git/*\")"
+    ]
+  }
+}

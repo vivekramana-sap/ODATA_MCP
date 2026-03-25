@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md
+*.mtar
+mta_archives/
+credentials.mtaext
+credentials.mtaext.template

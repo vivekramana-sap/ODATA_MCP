@@ -1,0 +1,16 @@
+[
+  {
+    "alias": "ean_e1",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_e1_ean_reserve/srvd/sap/zsd_jam_e1_ean_reserve/0001/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true
+  },
+  {
+    "alias": "ean_weight",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_weight_ean_reserve/srvd/sap/zsd_jam_weight_ean_reserve/0001/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true
+  }
+]

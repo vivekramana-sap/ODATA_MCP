@@ -1,0 +1,42 @@
+_schema-version: "3.2"
+ID: jam-odata-mcp-bridge
+description: JAM OData MCP Bridge — multi-service MCP server for SAP OData
+version: 0.0.1
+
+modules:
+  - name: jam-odata-mcp-bridge
+    type: python
+    path: .
+    parameters:
+      buildpack: python_buildpack
+      memory: 256M
+      instances: 1
+      command: python3 server.py
+      health-check-type: http
+      health-check-http-endpoint: /health
+    properties:
+      CONFIG_FILE: services.json
+      MCP_PASSTHROUGH: "true"
+      ODATA_USERNAME: ""
+      ODATA_PASSWORD: ""
+    requires:
+      - name: jam-odata-mcp-connectivity
+      - name: jam-odata-mcp-destination
+    build-parameters:
+      supported-platforms: [CF]
+
+resources:
+  - name: jam-odata-mcp-connectivity
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: connectivity
+      service-plan: lite
+
+  - name: jam-odata-mcp-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+
+parameters:
+  enable-parallel-deployments: true

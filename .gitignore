@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+credentials.mtaext
+*.mtar
+mta_archives/
