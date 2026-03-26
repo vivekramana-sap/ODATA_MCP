@@ -82,7 +82,7 @@ def _bridge_start() -> dict:
             return {"ok": False, "error": "Bridge already running", "pid": _bridge_proc.pid}
         try:
             proc = subprocess.Popen(
-                [sys.executable, os.path.join(BASE_DIR, "server.py"),
+                [sys.executable, os.path.join(BASE_DIR, "server_new.py"),
                  "--config", SERVICES_PATH, "--port", str(MCP_PORT)],
                 cwd=BASE_DIR,
                 stdout=subprocess.PIPE,
@@ -216,13 +216,6 @@ def probe_service(item: dict) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
             root = ET.fromstring(r.read())
-    except socket.gaierror:
-        import urllib.parse as _up
-        host = _up.urlparse(url).hostname or url
-        return {"success": False,
-                "error": f"Cannot resolve hostname '{host}'. "
-                         f"Make sure you are connected to VPN or the host is reachable from this machine.",
-                "hint": "dns"}
     except urllib.error.HTTPError as e:
         msg = f"HTTP {e.code} {e.reason}"
         if e.code == 401:
@@ -233,6 +226,13 @@ def probe_service(item: dict) -> dict:
             msg += " — URL not found; verify the service path"
         return {"success": False, "error": msg, "hint": "http"}
     except urllib.error.URLError as e:
+        import urllib.parse as _up
+        if isinstance(e.reason, socket.gaierror):
+            host = _up.urlparse(url).hostname or url
+            return {"success": False,
+                    "error": f"Cannot resolve hostname '{host}'. "
+                             f"Make sure you are connected to VPN or the host is reachable from this machine.",
+                    "hint": "dns"}
         reason = str(e.reason)
         if "timed out" in reason or "timeout" in reason.lower():
             return {"success": False,
@@ -240,7 +240,6 @@ def probe_service(item: dict) -> dict:
                              f"The host may be unreachable — check VPN or firewall.",
                     "hint": "timeout"}
         if "Connection refused" in reason:
-            import urllib.parse as _up
             host = _up.urlparse(url).netloc or url
             return {"success": False,
                     "error": f"Connection refused by {host}. Verify the host and port.",
@@ -532,7 +531,7 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
             if not routes:
                 self._json(200, {"ok": False, "error": "App not deployed or no routes found"})
                 return
-            url = f"https://{routes}"
+            url = f"https://{routes}/health"
             try:
                 req = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(req, timeout=15) as r:

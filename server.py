@@ -129,7 +129,8 @@ class ODataService:
     def __init__(self, alias: str, url: str, username: str = "",
                  password: str = "", passthrough: bool = False,
                  include: list = None, readonly: bool = False,
-                 include_actions: list = None):
+                 include_actions: list = None,
+                 default_top: int = 50, max_top: int = 500):
         self.alias = alias
         self.url = url.rstrip("/")
         self.username = username
@@ -137,6 +138,8 @@ class ODataService:
         self.passthrough = passthrough  # forward caller's credentials to OData
         self.readonly = readonly        # skip create/update/delete tools
         self.include_actions = set(include_actions) if include_actions else None
+        self.default_top = default_top  # default $top cap for filter queries (agent safety)
+        self.max_top = max_top          # hard upper cap on $top
 
         self.entity_sets: dict[str, dict] = {}
         self.actions: list[dict] = []
@@ -291,20 +294,25 @@ class ODataService:
             self.schema_ns = schema.get("Namespace", "")
             break
 
-        # Entity types
+        # Entity types — with SAP label annotations and navigation properties
+        _SAP_NS = "http://www.sap.com/Protocols/SAPData"
         entity_types: dict[str, dict] = {}
         for et in root.iter(f"{{{ns}}}EntityType"):
             name = et.get("Name", "")
             keys = [p.get("Name") for p in et.findall(
                 f"{{{ns}}}Key/{{{ns}}}PropertyRef")]
-            props = {
-                p.get("Name", ""): {
+            props = {}
+            for p in et.findall(f"{{{ns}}}Property"):
+                pname = p.get("Name", "")
+                props[pname] = {
                     "type": p.get("Type", "Edm.String"),
                     "nullable": p.get("Nullable", "true").lower() != "false",
+                    "label": (p.get(f"{{{_SAP_NS}}}label") or "").strip(),
                 }
-                for p in et.findall(f"{{{ns}}}Property")
-            }
-            entity_types[name] = {"keys": keys, "props": props}
+            nav_props = [
+                np.get("Name", "") for np in et.findall(f"{{{ns}}}NavigationProperty")
+            ]
+            entity_types[name] = {"keys": keys, "props": props, "nav_props": nav_props}
 
         # Entity sets
         et_to_es: dict[str, str] = {}
@@ -312,10 +320,11 @@ class ODataService:
             for es in container.findall(f"{{{ns}}}EntitySet"):
                 es_name = es.get("Name", "")
                 et_local = es.get("EntityType", "").split(".")[-1]
-                et_data = entity_types.get(et_local, {"keys": [], "props": {}})
+                et_data = entity_types.get(et_local, {"keys": [], "props": {}, "nav_props": []})
                 self.entity_sets[es_name] = {
                     "keys": et_data["keys"],
                     "props": et_data["props"],
+                    "nav_props": et_data.get("nav_props", []),
                 }
                 et_to_es[et_local] = es_name
 
@@ -374,6 +383,11 @@ class ODataService:
     # ------------------------------------------------------------------ #
 
     def filter(self, entity_set: str, args: dict, auth: str = "") -> dict:
+        # Apply default_top/max_top to prevent unbounded agent queries
+        if args.get("top") is None and self.default_top:
+            args["top"] = self.default_top
+        if args.get("top") is not None and self.max_top:
+            args["top"] = min(int(args["top"]), self.max_top)
         qs = {}
         for k in ("filter", "select", "orderby", "expand"):
             if args.get(k):
@@ -445,26 +459,41 @@ class Bridge:
             for es_name, es in svc.entity_sets.items():
                 keys = es["keys"]
                 props = es["props"]
+                nav_props = es.get("nav_props", [])
                 key_schema = {k: {"type": edm_to_json(props.get(k, {}).get("type", "Edm.String")),
-                                   "description": f"Key: {k}"} for k in keys}
-                all_schema = {n: {"type": edm_to_json(m["type"]), "description": n}
+                                   "description": f"{props.get(k, {}).get('label') or k} (key)"} for k in keys}
+                all_schema = {n: {"type": edm_to_json(m["type"]),
+                                  "description": m.get("label") or n}
                               for n, m in props.items()}
                 non_key_schema = {n: v for n, v in all_schema.items() if n not in keys}
 
                 field_list = ", ".join(props.keys())
-                filter_desc = (f"OData filter expression, e.g. \"{keys[0]} eq 'value'\". "
-                               f"Fields: {field_list}") if keys else f"OData filter expression. Fields: {field_list}"
+                nav_hint = f" Expandable: {', '.join(nav_props)}." if nav_props else ""
+                filter_desc = (
+                    f"OData $filter, e.g. \"{keys[0]} eq 'value'\". Fields: {field_list}.{nav_hint} "
+                    f"Run {alias}_schema_{es_name} to see field labels."
+                ) if keys else (
+                    f"OData $filter. Fields: {field_list}.{nav_hint}"
+                )
+                expand_desc = (
+                    f"Navigation properties to expand: {', '.join(nav_props)}"
+                    if nav_props else "Navigation properties to expand"
+                )
 
                 es_tools = [
+                    self._tool(f"{alias}_schema_{es_name}",
+                               f"[{alias}] Describe {es_name} fields — returns field names, types, SAP labels and navigation properties. Run before querying to discover the entity structure.",
+                               {}),
                     self._tool(f"{alias}_filter_{es_name}",
-                               f"[{alias}] List/filter {es_name} — use filter param to narrow results, e.g. \"{keys[0]} eq '1002'\"" if keys else f"[{alias}] List/filter {es_name}",
+                               f"[{alias}] List/filter {es_name}" + (f" — e.g. filter: \"{keys[0]} eq '1002'\"" if keys else ""),
                                {"filter": {"type": "string", "description": filter_desc},
                                 "select": {"type": "string", "description": f"Comma-separated fields to return. Available: {field_list}"},
-                                "orderby": {"type": "string", "description": "Field name to sort by, e.g. 'SupplierName asc'"},
-                                "expand": {"type": "string", "description": "Navigation properties to expand"},
-                                "top": {"type": "integer", "description": "Max number of results to return"},
-                                "skip": {"type": "integer", "description": "Number of results to skip (for pagination)"},
-                                "count": {"type": "boolean", "description": "Include total count in response"}}),
+                                "orderby": {"type": "string", "description": "Sort field and direction, e.g. 'Name asc'"},
+                                "expand": {"type": "string", "description": expand_desc},
+                                "top": {"type": "integer", "description": "Max results (server applies default_top if omitted)"},
+                                "skip": {"type": "integer", "description": "Offset for pagination, e.g. skip=50 for page 2"},
+                                "count": {"type": "boolean", "description": "Include @odata.count in response"}}),
+
                     self._tool(f"{alias}_count_{es_name}",
                                f"[{alias}] Count {es_name}",
                                {"filter": {"type": "string", "description": filter_desc}}),
@@ -540,6 +569,28 @@ class Bridge:
             if rest.startswith("action_"):
                 return svc.action(rest[7:], dict(args), auth=ah)
 
+            if rest.startswith("schema_"):
+                es_name = rest[7:]
+                if es_name not in svc.entity_sets:
+                    return {"error": f"Unknown entity set: {es_name}"}
+                es = svc.entity_sets[es_name]
+                fields = [
+                    {"name": k, "type": v["type"], "label": v.get("label") or k,
+                     "nullable": v.get("nullable", True), "key": k in es["keys"]}
+                    for k, v in es["props"].items()
+                ]
+                nav = es.get("nav_props", [])
+                return {
+                    "entity_set": es_name, "keys": es["keys"],
+                    "fields": fields, "nav_props": nav,
+                    "_mcp_hint": (
+                        f"Use {alias}_filter_{es_name} to list records. "
+                        f"Keys (required for get/update/delete): {es['keys']}. "
+                        + (f"Expandable navigation: {', '.join(nav)}. " if nav else "")
+                        + f"Total fields: {len(fields)}."
+                    ),
+                }
+
             for op in ("filter", "count", "get", "create", "update", "delete"):
                 if not rest.startswith(op + "_"):
                     continue
@@ -548,7 +599,20 @@ class Bridge:
                     return {"error": f"Unknown entity set: {es_name}"}
                 args = dict(args)
                 if op == "filter":
-                    return svc.filter(es_name, args, auth=ah)
+                    effective_top = args.get("top") or svc.default_top or 0
+                    if svc.max_top and effective_top:
+                        effective_top = min(int(effective_top), svc.max_top)
+                    result = svc.filter(es_name, args, auth=ah)
+                    if isinstance(result, dict) and effective_top:
+                        items = result.get("value", [])
+                        if items and len(items) >= effective_top:
+                            result["_pagination_hint"] = (
+                                f"Returned {len(items)} records (limit={effective_top}). "
+                                f"Results may be truncated — use skip={len(items)} for next page, "
+                                f"add $filter to narrow results, or call {alias}_count_{es_name} "
+                                f"to get the total."
+                            )
+                    return result
                 if op == "count":
                     return svc.count(es_name, args.get("filter", ""), auth=ah)
                 if op == "get":
@@ -726,6 +790,8 @@ def load_config(path: str) -> list[ODataService]:
 
         include = item.get("include") or None
         readonly = item.get("readonly", False)
+        default_top = item.get("default_top", 50)
+        max_top     = item.get("max_top", 500)
 
         sys.stderr.write(f"[bridge] Loading '{alias}' {url}"
                          f"{' [passthrough]' if passthrough else ''}"
@@ -734,7 +800,8 @@ def load_config(path: str) -> list[ODataService]:
             include_actions = item.get("include_actions", None)
             svc = ODataService(alias, url, username, password, passthrough,
                                include=include, readonly=readonly,
-                               include_actions=include_actions)
+                               include_actions=include_actions,
+                               default_top=default_top, max_top=max_top)
             sys.stderr.write(f"[bridge]   entity sets : {list(svc.entity_sets)}\n")
             sys.stderr.write(f"[bridge]   actions     : {[a['name'] for a in svc.actions]}\n")
             services.append(svc)

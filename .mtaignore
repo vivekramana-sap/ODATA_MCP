@@ -1,0 +1,32 @@
+# MTA build tool ignore — prevents these from being packaged into the .mtar archive
+
+# build artifacts (prevents recursive self-inclusion)
+.jam-odata-mcp-bridge_mta_build_tmp/
+mta_archives/
+*.mtar
+Makefile_*.mta
+
+# credentials — never package
+env
+credentials.mtaext
+credentials.mtaext.template
+
+# dev-only tools
+configurator.py
+ui/
+patches.py
+deploy.sh
+docker
+server.py
+
+# python cache
+__pycache__/
+*.pyc
+
+# editor / tooling
+.git/
+.gitignore
+.cfignore
+.mtaignore
+*.md
+.claude/

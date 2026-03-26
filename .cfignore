@@ -7,3 +7,18 @@ __pycache__/
 mta_archives/
 credentials.mtaext
 credentials.mtaext.template
+
+# credentials — never upload
+env
+
+# dev-only tools
+configurator.py
+ui/
+patches.py
+deploy.sh
+docker
+server.py
+
+# editor / tooling
+.claude/
+.jam-odata-mcp-bridge_mta_build_tmp/

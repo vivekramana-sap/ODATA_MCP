@@ -11,12 +11,11 @@ modules:
       buildpack: python_buildpack
       memory: 256M
       instances: 1
-      command: python3 server.py
+      command: python3 server_new.py --passthrough --host 0.0.0.0 --i-am-security-expert
       health-check-type: http
       health-check-http-endpoint: /health
     properties:
       CONFIG_FILE: services.json
-      MCP_PASSTHROUGH: "true"
       ODATA_USERNAME: ""
       ODATA_PASSWORD: ""
     requires:
@@ -24,6 +23,25 @@ modules:
       - name: jam-odata-mcp-destination
     build-parameters:
       supported-platforms: [CF]
+      ignore:
+        - ".jam-odata-mcp-bridge_mta_build_tmp/"
+        - "mta_archives/"
+        - "*.mtar"
+        - "Makefile_*.mta"
+        - "env"
+        - "credentials.mtaext"
+        - "credentials.mtaext.template"
+        - "configurator.py"
+        - "ui/"
+        - "patches.py"
+        - "deploy.sh"
+        - "docker"
+        - "server.py"
+        - "__pycache__/"
+        - "*.pyc"
+        - ".git/"
+        - ".claude/"
+        - "*.md"
 
 resources:
   - name: jam-odata-mcp-connectivity

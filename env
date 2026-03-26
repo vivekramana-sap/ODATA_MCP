@@ -1,0 +1,21 @@
+# ── JAM OData MCP Bridge — .env.example ──────────────────────────────────────
+# Copy this file to .env and fill in your values.
+# Lines starting with # are comments and are ignored.
+# Values are NOT expanded by shell — write them literally.
+
+# ── OData service credentials ─────────────────────────────────────────────────
+ODATA_USERNAME=nagarajv
+ODATA_PASSWORD=Thengadeep@17
+
+# ── MCP endpoint protection (HTTP transport only) ────────────────────────────
+MCP_TOKEN=replace_with_random_secret
+
+# ── SAP BTP / CF (only needed when deploying to BTP Cloud Foundry) ───────────
+# VCAP_SERVICES is normally injected by CF automatically.
+# Only set manually for local BTP testing:
+# VCAP_SERVICES={"connectivity":[{"credentials":{...}}]}
+
+# ── Optional overrides ────────────────────────────────────────────────────────
+# LOG_FILE=./logs/bridge.log
+# MAX_RESPONSE_SIZE=5242880
+# HTTP_TIMEOUT=30
