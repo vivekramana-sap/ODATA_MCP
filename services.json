@@ -5,8 +5,10 @@
     "username": "${ODATA_USERNAME}",
     "password": "${ODATA_PASSWORD}",
     "passthrough": true,
+    "readonly": true,
     "default_top": 5,
-    "max_top": 20
+    "max_top": 20,
+    "group": "ean"
   },
   {
     "alias": "business partner",
@@ -20,7 +22,8 @@
     "include": [
       "A_BusinessPartner",
       "A_BusinessPartnerAddress"
-    ]
+    ],
+    "group": "bp"
   },
   {
     "alias": "product",
@@ -38,6 +41,7 @@
     "password": "${ODATA_PASSWORD}",
     "passthrough": true,
     "readonly": false,
+    "default_top": 5,
     "include_actions": [
       "GenerateEAN_E1"
     ],
