@@ -1,16 +1,19 @@
 ---
 applications:
-  - name: jam-odata-mcp-bridge
+  - name: jam-odata-mcp-bridge-v2
     buildpacks:
       - python_buildpack
     memory: 256M
     instances: 1
-    command: python3 server_new.py --passthrough --host 0.0.0.0 --i-am-security-expert
+    command: python3 server_new.py --host 0.0.0.0
     health-check-type: http
     health-check-http-endpoint: /health
+    routes:
+      - route: jam-odata-mcp-bridge-v2.${default-domain}
     env:
       CONFIG_FILE: services.json
-      PORT: "8080"
+      IDP_HINT: "${IDP_HINT}"
     services:
-      - jam-odata-mcp-connectivity
-      - jam-odata-mcp-destination
+      - jam-odata-mcp-connectivity-v2
+      - jam-odata-mcp-destination-v2
+      - jam-odata-mcp-xsuaa-v2

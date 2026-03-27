@@ -28,7 +28,7 @@ echo ""
 echo "[ 2/3 ] Building MTA archive..."
 mbt build -t .
 
-MTAR=$(ls -1t jam-odata-mcp-bridge_*.mtar 2>/dev/null | head -1)
+MTAR=$(ls -1t jam-odata-mcp-bridge-v2_*.mtar 2>/dev/null | head -1)
 if [ -z "$MTAR" ]; then
   echo "ERROR: No .mtar file found after build."
   exit 1
@@ -43,6 +43,6 @@ cf deploy "$MTAR" -e "$MTAEXT" -f
 # -- Done ----------------------------------------------------------------------
 echo ""
 echo "=== Done ==="
-APP_URL=$(cf app jam-odata-mcp-bridge | grep -E "^routes:" | awk '{print $2}')
+APP_URL=$(cf app jam-odata-mcp-bridge-v2 | grep -E "^routes:" | awk '{print $2}')
 echo "    MCP endpoint: https://$APP_URL/mcp"
 echo "    Health:       https://$APP_URL/health"

@@ -27,10 +27,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICES_PATH = os.path.join(BASE_DIR, "services.json")
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.mtaext")
 DEPLOY_SCRIPT = os.path.join(BASE_DIR, "deploy.sh")
-UI_PATH = os.path.join(BASE_DIR, "ui", "index.html")
+UI_PATH = os.path.join(BASE_DIR, "ui", "index_react.html")
 MCP_PORT = int(os.environ.get("MCP_PORT", "7777"))
 HTTP_TIMEOUT = 20
-CF_APP_NAME = "jam-odata-mcp-bridge"
+CF_APP_NAME = "jam-odata-mcp-bridge-v2"
 
 _bridge_proc = None
 _bridge_lock = threading.Lock()
@@ -56,10 +56,10 @@ def expand_env(value: str) -> str:
 
 
 def load_env_from_creds():
-    """Seed env vars from credentials.mtaext if not already set."""
+    """Load credentials from credentials.mtaext into env vars (always overwrites)."""
     creds = read_credentials()
     for key, val in creds.items():
-        if val and not os.environ.get(key):
+        if val:
             os.environ[key] = val
 
 
@@ -81,9 +81,17 @@ def _bridge_start() -> dict:
         if _bridge_proc and _bridge_proc.poll() is None:
             return {"ok": False, "error": "Bridge already running", "pid": _bridge_proc.pid}
         try:
+            creds = read_credentials()
+            cmd = [sys.executable, os.path.join(BASE_DIR, "server_new.py"),
+                   "--config", SERVICES_PATH, "--port", str(MCP_PORT)]
+            if creds.get("MCP_TOKEN"):
+                cmd += ["--mcp-token", creds["MCP_TOKEN"]]
+            if creds.get("MCP_USERNAME"):
+                cmd += ["--username", creds["MCP_USERNAME"]]
+            if creds.get("MCP_PASSWORD"):
+                cmd += ["--password", creds["MCP_PASSWORD"]]
             proc = subprocess.Popen(
-                [sys.executable, os.path.join(BASE_DIR, "server_new.py"),
-                 "--config", SERVICES_PATH, "--port", str(MCP_PORT)],
+                cmd,
                 cwd=BASE_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -155,7 +163,7 @@ def read_credentials() -> dict:
     except FileNotFoundError:
         return {"ODATA_USERNAME": "", "ODATA_PASSWORD": ""}
     result = {}
-    for key in ("ODATA_USERNAME", "ODATA_PASSWORD", "MCP_USERNAME", "MCP_PASSWORD"):
+    for key in ("ODATA_USERNAME", "ODATA_PASSWORD", "MCP_USERNAME", "MCP_PASSWORD", "MCP_TOKEN"):
         m = re.search(rf'^\s+{key}:\s+"?(.*?)"?\s*$', text, re.MULTILINE)
         result[key] = m.group(1) if m else ""
     return result
@@ -168,11 +176,11 @@ def write_credentials(updates: dict):
 
     props = "\n".join(f'      {k}: "{v}"' for k, v in existing.items() if v)
     content = f"""_schema-version: "3.2"
-ID: jam-odata-mcp-bridge-credentials
-extends: jam-odata-mcp-bridge
+ID: jam-odata-mcp-bridge-v2-credentials
+extends: jam-odata-mcp-bridge-v2
 
 modules:
-  - name: jam-odata-mcp-bridge
+  - name: jam-odata-mcp-bridge-v2
     properties:
 {props}
 """
@@ -458,9 +466,34 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
     # -- Helpers ----------------------------------------------------------------
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin", "")
+        allowed = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+        if allowed:
+            allowed_set = {o.strip() for o in allowed.split(",") if o.strip()}
+            if origin in allowed_set:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+
+    def _check_auth(self) -> bool:
+        """Validate configurator access.
+
+        If CONFIGURATOR_TOKEN is set, require it as a Bearer token.
+        If not set, allow local requests only (127.0.0.1 / ::1).
+        """
+        token = os.environ.get("CONFIGURATOR_TOKEN", "").strip()
+        if token:
+            ah = self.headers.get("Authorization", "")
+            return ah == f"Bearer {token}"
+        # No token configured: restrict to localhost
+        client_ip = self.client_address[0]
+        return client_ip in ("127.0.0.1", "::1")
 
     def _json(self, status: int, data):
         body = json.dumps(data).encode()
@@ -499,10 +532,16 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
-        if path in ("/", "/index.html"):
+        if path in ("/", "/index.html", "/index_react.html"):
             self._serve_file(UI_PATH, "text/html; charset=utf-8")
+            return
 
-        elif path == "/api/services":
+        # All /api/* endpoints require auth
+        if path.startswith("/api/") and not self._check_auth():
+            self._json(401, {"error": "Unauthorized"})
+            return
+
+        if path == "/api/services":
             self._json(200, read_services())
 
         elif path == "/api/credentials":
@@ -558,6 +597,10 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path
 
+        if path.startswith("/api/") and not self._check_auth():
+            self._json(401, {"error": "Unauthorized"})
+            return
+
         if path == "/api/probe":
             data = self._body()
             self._json(200, probe_service(data))
@@ -597,6 +640,10 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = self.path
+
+        if path.startswith("/api/") and not self._check_auth():
+            self._json(401, {"error": "Unauthorized"})
+            return
 
         if path == "/api/services":
             data = self._body()

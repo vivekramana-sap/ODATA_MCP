@@ -8,7 +8,12 @@ ODATA_USERNAME=nagarajv
 ODATA_PASSWORD=Thengadeep@17
 
 # ── MCP endpoint protection (HTTP transport only) ────────────────────────────
+# Option A — Bearer token (preferred for machine clients)
 MCP_TOKEN=replace_with_random_secret
+# Option B — Basic auth username/password (like the original server.py)
+# MCP_USERNAME=replace_with_username
+# MCP_PASSWORD=replace_with_password
+# Both options can be active simultaneously; either grants access.
 
 # ── SAP BTP / CF (only needed when deploying to BTP Cloud Foundry) ───────────
 # VCAP_SERVICES is normally injected by CF automatically.

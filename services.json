@@ -4,13 +4,46 @@
     "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_e1_ean_reserve/srvd/sap/zsd_jam_e1_ean_reserve/0001/",
     "username": "${ODATA_USERNAME}",
     "password": "${ODATA_PASSWORD}",
-    "passthrough": true
+    "passthrough": true,
+    "default_top": 5,
+    "max_top": 20
   },
   {
     "alias": "ean_weight",
     "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_weight_ean_reserve/srvd/sap/zsd_jam_weight_ean_reserve/0001/",
     "username": "${ODATA_USERNAME}",
     "password": "${ODATA_PASSWORD}",
-    "passthrough": true
+    "passthrough": true,
+    "default_top": 5,
+    "max_top": 20
+  },
+  {
+    "alias": "business partner",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_BUSINESS_PARTNER/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true,
+    "readonly": false,
+    "default_top": 5,
+    "max_top": 20,
+    "include": [
+      "A_BusinessPartner",
+      "A_BusinessPartnerAddress"
+    ]
+  },
+  {
+    "alias": "Product",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_PRODUCT_SRV/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true,
+    "readonly": false,
+    "default_top": 5,
+    "max_top": 20,
+    "include": [
+      "A_ProductBasicText",
+      "A_ProductDescription",
+      "A_Product"
+    ]
   }
 ]

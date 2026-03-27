@@ -22,3 +22,4 @@ server.py
 # editor / tooling
 .claude/
 .jam-odata-mcp-bridge_mta_build_tmp/
+xs-security.json

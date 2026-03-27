@@ -1,26 +1,32 @@
 _schema-version: "3.2"
-ID: jam-odata-mcp-bridge
-description: JAM OData MCP Bridge — multi-service MCP server for SAP OData
-version: 0.0.1
+ID: jam-odata-mcp-bridge-v2
+description: JAM OData MCP Bridge v2 — improved AI-agent tools for SAP OData
+version: 0.2.0
 
 modules:
-  - name: jam-odata-mcp-bridge
+  - name: jam-odata-mcp-bridge-v2
     type: python
     path: .
     parameters:
       buildpack: python_buildpack
       memory: 256M
       instances: 1
-      command: python3 server_new.py --passthrough --host 0.0.0.0 --i-am-security-expert
+      command: python3 server_new.py --host 0.0.0.0 --i-am-security-expert
       health-check-type: http
       health-check-http-endpoint: /health
+      routes:
+        - route: jam-odata-mcp-bridge-v2.${default-domain}
     properties:
       CONFIG_FILE: services.json
       ODATA_USERNAME: ""
       ODATA_PASSWORD: ""
+      IDP_HINT: ""
     requires:
-      - name: jam-odata-mcp-connectivity
-      - name: jam-odata-mcp-destination
+      - name: jam-odata-mcp-connectivity-v2
+      - name: jam-odata-mcp-destination-v2
+      - name: jam-odata-mcp-xsuaa-v2
+        parameters:
+          credential-type: instance-secret
     build-parameters:
       supported-platforms: [CF]
       ignore:
@@ -44,17 +50,24 @@ modules:
         - "*.md"
 
 resources:
-  - name: jam-odata-mcp-connectivity
+  - name: jam-odata-mcp-connectivity-v2
     type: org.cloudfoundry.managed-service
     parameters:
       service: connectivity
       service-plan: lite
 
-  - name: jam-odata-mcp-destination
+  - name: jam-odata-mcp-destination-v2
     type: org.cloudfoundry.managed-service
     parameters:
       service: destination
       service-plan: lite
+
+  - name: jam-odata-mcp-xsuaa-v2
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service:      xsuaa
+      service-plan: application
+      path:         ./xs-security.json
 
 parameters:
   enable-parallel-deployments: true
