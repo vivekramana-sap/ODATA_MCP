@@ -75,6 +75,26 @@ def _bridge_status() -> dict:
     return {"running": True, "pid": _bridge_proc.pid}
 
 
+def _bridge_endpoints() -> dict:
+    """Return a mapping of group → MCP endpoint URL derived from services.json."""
+    base = f"http://localhost:{MCP_PORT}"
+    endpoints = {"default": f"{base}/mcp"}
+    try:
+        services = read_services()
+        groups: dict = {}
+        for svc in services:
+            g = svc.get("group", "").strip()
+            if g and g not in groups:
+                groups[g] = []
+            if g:
+                groups[g].append(svc.get("alias", ""))
+        for gname, aliases in groups.items():
+            endpoints[gname] = f"{base}/mcp/{gname}"
+    except Exception:
+        pass
+    return {"endpoints": endpoints}
+
+
 def _bridge_start() -> dict:
     global _bridge_proc, _bridge_log
     with _bridge_lock:
@@ -161,9 +181,9 @@ def read_credentials() -> dict:
         with open(CREDENTIALS_PATH) as f:
             text = f.read()
     except FileNotFoundError:
-        return {"ODATA_USERNAME": "", "ODATA_PASSWORD": ""}
+        return {}
     result = {}
-    for key in ("ODATA_USERNAME", "ODATA_PASSWORD", "MCP_USERNAME", "MCP_PASSWORD", "MCP_TOKEN"):
+    for key in ("MCP_USERNAME", "MCP_PASSWORD", "MCP_TOKEN"):
         m = re.search(rf'^\s+{key}:\s+"?(.*?)"?\s*$', text, re.MULTILINE)
         result[key] = m.group(1) if m else ""
     return result
@@ -227,7 +247,7 @@ def probe_service(item: dict) -> dict:
     except urllib.error.HTTPError as e:
         msg = f"HTTP {e.code} {e.reason}"
         if e.code == 401:
-            msg += " — check ODATA_USERNAME / ODATA_PASSWORD in Credentials tab"
+            msg += " — check username/password in the service config (or use passthrough auth)"
         elif e.code == 403:
             msg += " — user lacks authorization to read $metadata"
         elif e.code == 404:
@@ -581,6 +601,9 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/bridge/status":
             self._json(200, _bridge_status())
+
+        elif path == "/api/bridge/endpoints":
+            self._json(200, _bridge_endpoints())
 
         elif path == "/api/bridge/logs":
             with _bridge_log_lock:

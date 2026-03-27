@@ -82,12 +82,31 @@ def run_stdio(bridge: Bridge, verbose: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 def make_http_handler(
-    bridge:      Bridge,
+    bridges,
     mcp_token:   str = "",
     passthrough: bool = False,
 ):
+    # Normalise: accept a single Bridge for backward compat
+    if isinstance(bridges, Bridge):
+        _bridges: dict = {"": bridges}
+    else:
+        _bridges: dict = bridges  # dict[str, Bridge]
+
     _mcp_token   = mcp_token
     _passthrough = passthrough
+
+    def _resolve_bridge(path: str):
+        """Return (group, bridge) for a given request path, or (None, None) if not a valid /mcp path."""
+        clean = path.split("?")[0].rstrip("/")
+        if clean in ("/mcp", "", "/"):
+            return "", _bridges.get("", next(iter(_bridges.values())))
+        if clean.startswith("/mcp/"):
+            group = clean[5:]  # strip leading "/mcp/"
+            if not group or "/" in group:
+                return None, None
+            b = _bridges.get(group)
+            return (group, b) if b else (group, None)
+        return None, None
 
     class MCPHandler(BaseHTTPRequestHandler):
         protocol_version  = "HTTP/1.1"
@@ -182,7 +201,11 @@ def make_http_handler(
                 self._cors()
                 self.end_headers()
                 self.wfile.write(body)
-            elif self.path == "/mcp":
+            elif self.path == "/mcp" or (
+                self.path.startswith("/mcp/")
+                and "/" not in self.path[5:].split("?")[0]
+                and self.path[5:].split("?")[0]
+            ):
                 self.send_response(405)
                 self.send_header("Allow",          "POST, OPTIONS")
                 self.send_header("Content-Length", "0")
@@ -258,10 +281,24 @@ def make_http_handler(
                 self.wfile.write(body)
                 return
 
-            if self.path not in ("/mcp", "/"):
+            # ---- Route /mcp and /mcp/<group> paths ----
+            group, active_bridge = _resolve_bridge(self.path)
+            if group is None:
+                # Not a recognised MCP path
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+                return
+
+            if active_bridge is None:
+                # Valid /mcp/<group> pattern but no bridge registered for that group
+                body = json.dumps({"error": f"Unknown MCP group: {group}"}).encode()
+                self.send_response(404)
+                self.send_header("Content-Type",   "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self._cors()
+                self.end_headers()
+                self.wfile.write(body)
                 return
 
             if not self._auth_ok():
@@ -300,7 +337,7 @@ def make_http_handler(
                 self._send_json(resp)
                 return
 
-            resp = bridge.handle(req, auth_header=self._caller_auth())
+            resp = active_bridge.handle(req, auth_header=self._caller_auth())
             if resp is not None:
                 self._send_json(resp)
             else:

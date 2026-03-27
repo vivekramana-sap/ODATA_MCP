@@ -251,6 +251,17 @@ def main() -> None:
 
     bridge = Bridge(services, sort_tools=args.sort_tools, verbose=args.verbose)
 
+    # ---- Build per-group sub-bridges for /mcp/<group> routing ----
+    from collections import defaultdict as _defaultdict
+    _groups: dict = _defaultdict(list)
+    for svc in services:
+        if svc.group:
+            _groups[svc.group].append(svc)
+
+    bridges: dict = {"": bridge}  # "" → default /mcp endpoint (all services)
+    for _gname, _gsvcs in _groups.items():
+        bridges[_gname] = Bridge(_gsvcs, sort_tools=args.sort_tools, verbose=args.verbose)
+
     # ---- Trace mode: dump tools and exit ----
     if args.trace:
         print_trace(bridge)
@@ -275,7 +286,7 @@ def main() -> None:
 
     # ---- HTTP transport ----
     MCPHandler = make_http_handler(
-        bridge, mcp_token=mcp_token, passthrough=args.passthrough
+        bridges, mcp_token=mcp_token, passthrough=args.passthrough
     )
     MCPHandler.mcp_username = args.username
     MCPHandler.mcp_password = args.password
@@ -310,6 +321,13 @@ def main() -> None:
         f"tools: {len(bridge._all_tools)} | "
         f"transport: http\n"
     )
+    if len(bridges) > 1:
+        for _gname in sorted(k for k in bridges if k):
+            _b = bridges[_gname]
+            sys.stderr.write(
+                f"[bridge]   /mcp/{_gname} → {len(_b._all_tools)} tools "
+                f"({', '.join(_b.services.keys())})\n"
+            )
 
     if args.verbose:
         for svc in services:

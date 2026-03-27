@@ -66,8 +66,10 @@ class ODataService:
         verbose_errors:         bool = False,
         max_items:              int  = 100,
         max_response_size:      int  = 5 * 1024 * 1024,
+        group:                  str  = "",
     ):
         self.alias                = alias
+        self.group                = group
         self.url                  = url.rstrip("/")
         self.username             = username
         self.password             = password

@@ -30,6 +30,7 @@ def load_services(config_path: str, cli_args) -> list:
         max_top            = svc_cfg.get("max_top",     500)
         cookie_file        = svc_cfg.get("cookie_file",   getattr(cli_args, "cookie_file",   ""))
         cookie_string      = svc_cfg.get("cookie_string", getattr(cli_args, "cookie_string", ""))
+        group              = svc_cfg.get("group",          "")
 
         if getattr(cli_args, "read_only",               False):
             readonly = True
@@ -58,5 +59,6 @@ def load_services(config_path: str, cli_args) -> list:
             verbose_errors         = getattr(cli_args, "verbose_errors",          False),
             max_items              = getattr(cli_args, "max_items",               100),
             max_response_size      = getattr(cli_args, "max_response_size", 5 * 1024 * 1024),
+            group                  = group,
         ))
     return services
