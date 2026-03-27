@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { ODataService, ProbeResult } from '@/lib/types'
 import { probeService } from '@/lib/api'
 
 interface Props {
   service?: ODataService | null
+  defaultGroup?: string
   existingGroups?: string[]
+  existingAliases?: string[]
   onSave: (data: ODataService) => void
   onClose: () => void
 }
@@ -43,14 +45,47 @@ function RevealInput({ value, onChange, placeholder }: { value: string; onChange
   )
 }
 
-export default function ServiceModal({ service, existingGroups = [], onSave, onClose }: Props) {
+const CREDS_KEY = 'odata_svc_creds'
+
+function genAlias(existingAliases: string[]): string {
+  const existing = new Set(existingAliases)
+  for (let n = 1; n <= 999; n++) {
+    const candidate = `svc_${String(n).padStart(3, '0')}`
+    if (!existing.has(candidate)) return candidate
+  }
+  return `svc_${Date.now() % 10000}`
+}
+
+export default function ServiceModal({ service, defaultGroup, existingGroups = [], existingAliases = [], onSave, onClose }: Props) {
   const isEdit = !!service
-  const [form, setForm] = useState<ODataService>(() => service ? { ...BLANK, ...service } : { ...BLANK })
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [probe, setProbe]   = useState<ProbeResult | null>(null)
-  const [probing, setProbing] = useState(false)
-  const [selEs, setSelEs]   = useState<Set<string> | null>(null)
-  const [selAct, setSelAct]  = useState<Set<string> | null>(null)
+  const [form, setForm] = useState<ODataService>(() => {
+    if (service) return { ...BLANK, ...service }
+    return { ...BLANK, alias: genAlias(existingAliases), group: defaultGroup || '' }
+  })
+  const [showAdvanced, setShowAdvanced] = useState(!!(service?.username && !service.username.startsWith('${')))
+  const [probe, setProbe]       = useState<ProbeResult | null>(null)
+  const [probing, setProbing]   = useState(false)
+  const [selEs, setSelEs]       = useState<Set<string> | null>(null)
+  const [selAct, setSelAct]     = useState<Set<string> | null>(null)
+  const [groupIsNew, setGroupIsNew] = useState(
+    () => !!(service?.group && !existingGroups.includes(service.group))
+  )
+  const [rememberCreds, setRememberCreds] = useState(false)
+
+  // Load saved credentials on mount (new service only)
+  useEffect(() => {
+    if (isEdit) return
+    try {
+      const saved = localStorage.getItem(CREDS_KEY)
+      if (saved) {
+        const { username, password } = JSON.parse(saved) as { username?: string; password?: string }
+        if (username || password) {
+          setForm(f => ({ ...f, username: username || f.username, password: password || f.password }))
+          setRememberCreds(true)
+        }
+      }
+    } catch { /* ignore */ }
+  }, [isEdit])
 
   const set = <K extends keyof ODataService>(k: K, v: ODataService[K]) =>
     setForm(f => ({ ...f, [k]: v }))
@@ -76,6 +111,12 @@ export default function ServiceModal({ service, existingGroups = [], onSave, onC
   const toggleAct = (n: string) => setSelAct(s => { if (!s) return s; const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x })
 
   const handleSave = () => {
+    // Persist/clear credentials in localStorage
+    if (rememberCreds && form.username && form.password) {
+      try { localStorage.setItem(CREDS_KEY, JSON.stringify({ username: form.username, password: form.password })) } catch { /* ignore */ }
+    } else if (!rememberCreds) {
+      try { localStorage.removeItem(CREDS_KEY) } catch { /* ignore */ }
+    }
     const data: ODataService = { ...form }
     if (data.default_top === 50) delete data.default_top
     if (probe?.success && selEs !== null) {
@@ -138,7 +179,7 @@ export default function ServiceModal({ service, existingGroups = [], onSave, onC
           </Field>
         </div>
 
-        {/* Advanced credentials */}
+        {/* Credentials */}
         <div className="mb-4">
           <button
             type="button"
@@ -146,12 +187,12 @@ export default function ServiceModal({ service, existingGroups = [], onSave, onC
             className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors"
           >
             <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
-            Advanced — static OData credentials
+            OData credentials
           </button>
           {showAdvanced && (
             <div className="mt-3 p-3 bg-surface-1 border border-border rounded-lg space-y-3">
               <p className="text-xs text-text-muted">
-                Only needed if <strong>not</strong> using passthrough auth. With passthrough enabled, the caller's token is forwarded and these fields are ignored.
+                Use env-var placeholders <code className="font-mono text-text-secondary">${'{ODATA_USERNAME}'}</code> &amp; <code className="font-mono text-text-secondary">${'{ODATA_PASSWORD}'}</code>, or enter static values.
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Username">
@@ -161,52 +202,59 @@ export default function ServiceModal({ service, existingGroups = [], onSave, onC
                   <RevealInput value={form.password || ''} onChange={v => set('password', v)} placeholder="${ODATA_PASSWORD}" />
                 </Field>
               </div>
-              <Field label="Passthrough Auth">
-                <Toggle checked={!!form.passthrough} onChange={v => set('passthrough', v)} label="Forward caller's Authorization header to OData" />
-              </Field>
+              <div className="flex items-center justify-between">
+                <Field label="Passthrough Auth">
+                  <Toggle checked={!!form.passthrough} onChange={v => set('passthrough', v)} label="Forward caller's token to OData" />
+                </Field>
+                <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none shrink-0 mt-5">
+                  <input
+                    type="checkbox"
+                    checked={rememberCreds}
+                    onChange={e => setRememberCreds(e.target.checked)}
+                    className="accent-gold"
+                  />
+                  Remember locally
+                </label>
+              </div>
             </div>
           )}
         </div>
 
         {/* Group */}
         <Field label="MCP Group">
-          {existingGroups.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              <span className="text-xs text-text-muted self-center">Existing:</span>
-              {existingGroups.map(g => (
-                <button
-                  key={g}
-                  type="button"
-                  onClick={() => set('group', g)}
-                  className={`font-mono text-xs px-2 py-0.5 rounded-full border transition-colors
-                    ${ form.group === g
-                      ? 'bg-gold text-surface-1 border-gold'
-                      : 'border-border text-text-muted hover:border-gold hover:text-gold'}`}
-                >
-                  /{g}
-                </button>
-              ))}
-              {form.group && (
-                <button
-                  type="button"
-                  onClick={() => set('group', '')}
-                  className="text-xs px-2 py-0.5 rounded-full border border-border text-text-muted hover:border-status-red hover:text-status-red transition-colors"
-                >
-                  clear
-                </button>
-              )}
-            </div>
+          <select
+            className="input w-full"
+            value={groupIsNew ? '__new__' : (form.group || '')}
+            onChange={e => {
+              const v = e.target.value
+              if (v === '__new__') {
+                setGroupIsNew(true)
+                set('group', '')
+              } else {
+                setGroupIsNew(false)
+                set('group', v)
+              }
+            }}
+          >
+            <option value="">/mcp — default endpoint</option>
+            {existingGroups.map(g => (
+              <option key={g} value={g}>/mcp/{g}</option>
+            ))}
+            <option value="__new__">+ New group…</option>
+          </select>
+          {groupIsNew && (
+            <input
+              className="input w-full font-mono mt-2"
+              value={form.group || ''}
+              onChange={e => set('group', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+              placeholder="group-name  (letters, digits, - and _)"
+              autoFocus
+            />
           )}
-          <input
-            className="input w-full font-mono"
-            value={form.group || ''}
-            onChange={e => set('group', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-            placeholder="new-group  or leave empty for /mcp"
-          />
           <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-surface-1 border border-border rounded-lg">
             <span className="text-xs text-text-muted shrink-0">Routes to:</span>
             <code className="font-mono text-xs text-gold">
-              http://localhost:7777{form.group ? `/mcp/${form.group}` : '/mcp'}
+              {form.group ? `/mcp/${form.group}` : '/mcp'}
             </code>
           </div>
         </Field>

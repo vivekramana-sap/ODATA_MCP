@@ -609,6 +609,21 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json(200, {"ok": False, "error": str(e), "url": url})
 
+        elif path == "/api/btp/endpoints":
+            app = cf_app_status()
+            routes = app.get("routes", "").strip()
+            if not routes:
+                self._json(200, {"ok": False, "error": "App not deployed or no routes found"})
+                return
+            url = f"https://{routes}/mcp"
+            try:
+                req = urllib.request.Request(url, headers={"Accept": "application/json"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    data = json.loads(r.read().decode())
+                self._json(200, {"ok": True, "url": url, **data})
+            except Exception as e:
+                self._json(200, {"ok": False, "error": str(e), "url": url})
+
         elif path == "/api/bridge/status":
             self._json(200, _bridge_status())
 

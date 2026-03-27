@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function ServicesTab({ services, bridge, tools, onSave }: Props) {
-  const [modal,     setModal]     = useState<{ index: number; data: ODataService | null } | null>(null)
+  const [modal, setModal] = useState<{ index: number; data: ODataService | null; defaultGroup?: string } | null>(null)
   const [cfApp,     setCfApp]     = useState<CfAppStatus | null>(null)
   const [btp,       setBtp]       = useState<BtpHealth | null>(null)
   const [endpoints, setEndpoints] = useState<BridgeEndpoints | null>(null)
@@ -88,13 +88,16 @@ export default function ServicesTab({ services, bridge, tools, onSave }: Props) 
           bridgeRunning={bridge.running}
           onEdit={(idx) => setModal({ index: idx, data: services[idx] })}
           onDelete={handleDelete}
+          onAddToGroup={(group) => setModal({ index: -1, data: null, defaultGroup: group })}
         />
       )}
 
       {modal && (
         <ServiceModal
           service={modal.data}
+          defaultGroup={modal.defaultGroup}
           existingGroups={[...new Set(services.map(s => s.group).filter(Boolean) as string[])]}
+          existingAliases={services.map(s => s.alias)}
           onSave={handleModalSave}
           onClose={() => setModal(null)}
         />
@@ -103,12 +106,13 @@ export default function ServicesTab({ services, bridge, tools, onSave }: Props) 
   )
 }
 
-function GroupedServiceList({ services, tools, bridgeRunning, onEdit, onDelete }: {
+function GroupedServiceList({ services, tools, bridgeRunning, onEdit, onDelete, onAddToGroup }: {
   services: ODataService[]
   tools: MCPTool[]
   bridgeRunning: boolean
   onEdit: (idx: number) => void
   onDelete: (idx: number) => void
+  onAddToGroup: (group: string) => void
 }) {
   // Build ordered groups: named groups first (alphabetical), then ungrouped
   const groupMap = new Map<string, number[]>()
@@ -135,6 +139,12 @@ function GroupedServiceList({ services, tools, bridgeRunning, onEdit, onDelete }
               <span className="text-xs text-text-muted">{g ? `scoped endpoint` : `default endpoint`}</span>
               <div className="flex-1 border-t border-border/50" />
               <span className="text-xs text-text-muted">{indices.length} service{indices.length !== 1 ? 's' : ''}</span>
+              <button
+                onClick={() => onAddToGroup(g)}
+                className="text-xs px-2 py-0.5 rounded border border-gold/40 text-gold hover:bg-gold/10 transition-colors"
+              >
+                + Add
+              </button>
             </div>
             <div className="space-y-2 pl-3 border-l border-gold/20">
               {indices.map(idx => {

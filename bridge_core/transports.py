@@ -206,11 +206,33 @@ def make_http_handler(
                 and "/" not in self.path[5:].split("?")[0]
                 and self.path[5:].split("?")[0]
             ):
-                self.send_response(405)
-                self.send_header("Allow",          "POST, OPTIONS")
-                self.send_header("Content-Length", "0")
-                self._cors()
-                self.end_headers()
+                # Return discovery metadata as JSON; clients use POST for JSON-RPC
+                group, bridge = _resolve_bridge(self.path.split("?")[0])
+                if bridge is None:
+                    err = json.dumps({"error": f"No MCP endpoint at {self.path.split('?')[0]}"}).encode()
+                    self.send_response(404)
+                    self.send_header("Content-Type",   "application/json")
+                    self.send_header("Content-Length", str(len(err)))
+                    self._cors()
+                    self.end_headers()
+                    self.wfile.write(err)
+                else:
+                    info = {
+                        "endpoint":         group or "default",
+                        "path":             f"/mcp/{group}" if group else "/mcp",
+                        "protocol":         "mcp",
+                        "transport":        "Streamable HTTP — POST JSON-RPC to this URL",
+                        "services":         list(bridge.services.keys()),
+                        "tools_count":      len(bridge._all_tools),
+                        "available_groups": sorted(k for k in _bridges if k),
+                    }
+                    body = json.dumps(info, indent=2).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type",   "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self._cors()
+                    self.end_headers()
+                    self.wfile.write(body)
             elif self.path in (
                 "/.well-known/oauth-authorization-server",
                 "/.well-known/openid-configuration",

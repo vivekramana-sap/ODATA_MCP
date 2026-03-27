@@ -1,14 +1,5 @@
 [
   {
-    "alias": "ean_e1",
-    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_e1_ean_reserve/srvd/sap/zsd_jam_e1_ean_reserve/0001/",
-    "username": "${ODATA_USERNAME}",
-    "password": "${ODATA_PASSWORD}",
-    "passthrough": true,
-    "default_top": 5,
-    "max_top": 20
-  },
-  {
     "alias": "ean_weight",
     "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_weight_ean_reserve/srvd/sap/zsd_jam_weight_ean_reserve/0001/",
     "username": "${ODATA_USERNAME}",
@@ -32,27 +23,24 @@
     ]
   },
   {
-    "alias": "Product",
+    "alias": "product",
     "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_PRODUCT_SRV/",
     "username": "${ODATA_USERNAME}",
     "password": "${ODATA_PASSWORD}",
     "passthrough": true,
     "readonly": false,
-    "default_top": 5,
-    "max_top": 20,
-    "include": [
-      "A_ProductBasicText",
-      "A_ProductDescription",
-      "A_Product"
-    ]
+    "group": "products"
   },
   {
-    "alias": "article",
-    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_PRODUCT_SRV/",
-    "username": "nagarajv",
-    "password": "Thengadeep@17",
+    "alias": "ean_e1",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata4/sap/zsb_jam_e1_ean_reserve/srvd/sap/zsd_jam_e1_ean_reserve/0001/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
     "passthrough": true,
     "readonly": false,
-    "group": "products"
+    "include_actions": [
+      "GenerateEAN_E1"
+    ],
+    "group": "ean"
   }
 ]

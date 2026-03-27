@@ -50,8 +50,9 @@ export const probeService = (svc: Partial<ODataService>) =>
   request<ProbeResult>('/api/probe', json('POST', svc))
 
 // ── CF / BTP ───────────────────────────────────────────────────────────────
-export const getCfApp    = () => request<CfAppStatus>('/api/cf/app')
-export const getBtpHealth = () => request<BtpHealth>('/api/btp/health')
+export const getCfApp        = () => request<CfAppStatus>('/api/cf/app')
+export const getBtpHealth    = () => request<BtpHealth>('/api/btp/health')
+export const getBtpEndpoints = () => request<{ ok: boolean; url?: string; available_groups?: string[]; services?: string[]; tools_count?: number; error?: string }>('/api/btp/endpoints')
 
 // ── Deploy ─────────────────────────────────────────────────────────────────
 export const deploy = () => request<DeployResult>('/api/deploy', json('POST', {}))
