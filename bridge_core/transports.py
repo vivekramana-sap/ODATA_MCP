@@ -348,6 +348,21 @@ def make_http_handler(
             length = int(self.headers.get("Content-Length", 0))
             raw    = self.rfile.read(length).strip()
 
+            if not raw:
+                # Empty body — return discovery info same as GET
+                group, active_bridge = _resolve_bridge(self.path)
+                info = {
+                    "endpoint":         group or "default",
+                    "path":             f"/mcp/{group}" if group else "/mcp",
+                    "protocol":         "mcp",
+                    "transport":        "Streamable HTTP — POST JSON-RPC to this URL",
+                    "services":         list(active_bridge.services.keys()),
+                    "tools_count":      len(active_bridge._all_tools),
+                    "available_groups": sorted(k for k in _bridges if k),
+                }
+                self._send_json(info)
+                return
+
             try:
                 req = json.loads(raw)
             except json.JSONDecodeError as exc:

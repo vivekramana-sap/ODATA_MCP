@@ -257,17 +257,25 @@ class Bridge:
             non_key_map = {ODataService._safe_prop(k): k for k in non_key_props}
 
             # --- schema discovery tool ---
-            tname_schema = f"{a}_schema_{es_name}"
-            tools.append(self._make_tool(
-                tname_schema,
-                (
-                    f"[{a}] Describe {es_name} fields — returns field names, types, "
-                    f"SAP labels and navigation properties. "
-                    f"Run before querying to discover the entity structure."
-                ),
-                {},
-            ))
-            self._tool_map[tname_schema] = (svc, "schema", es_name)
+            # Only generate it when there are other tools for this entity set
+            # that the LLM might want to explore — no point if nothing else exists.
+            _any_read_op = (
+                svc.op_filter.allows(OP_FILTER)
+                or svc.op_filter.allows(OP_GET)
+                or svc.op_filter.allows(OP_SEARCH)
+            )
+            if _any_read_op:
+                tname_schema = f"{a}_schema_{es_name}"
+                tools.append(self._make_tool(
+                    tname_schema,
+                    (
+                        f"[{a}] Describe {es_name} fields — returns field names, types, "
+                        f"SAP labels, key fields, computed flags and navigation properties. "
+                        f"Call once to understand the structure before querying."
+                    ),
+                    {},
+                ))
+                self._tool_map[tname_schema] = (svc, "schema", es_name)
 
             # --- filter ---
             if svc.op_filter.allows(OP_FILTER):
@@ -286,11 +294,13 @@ class Bridge:
                 tools.append(self._make_tool(
                     f"{a}_filter_{es_name}",
                     (
-                        f"[{a}] List/filter {es_name}. "
+                        f"[{a}] Search/list/lookup {es_name} — USE THIS for any open-ended request "
+                        f"('get me a BP', 'find material X', 'show all orders for plant 1000'). "
+                        f"Also use when you don't have an exact key value yet. "
                         f"Returns up to {svc.default_top} records by default "
                         f"(server max: {svc.max_top}).{nav_hint} "
                         f"Key fields: {', '.join(keys) or 'none'}. "
-                        f"Use skip for pagination; call {a}_count_{es_name} for total count."
+                        f"Use skip+top for pagination; call {a}_count_{es_name} for total count."
                     ),
                     filter_props,
                 ))
@@ -324,16 +334,17 @@ class Bridge:
                 ))
 
             # --- get ---
-            if svc.op_filter.allows(OP_GET):
+            if svc.op_filter.allows(OP_GET) and caps.get("gettable_by_key", True):
                 tname = f"{a}_get_{es_name}"
                 self._prop_maps[tname] = key_map
                 tools.append(self._make_tool(
                     tname,
                     (
-                        f"[{a}] Get single {es_name} by key. "
-                        f"Key field(s): {', '.join(keys) or 'none'}. "
-                        f"Key predicate example: {key_hint}. "
-                        f"Use {a}_filter_{es_name} first if you do not know the key."
+                        f"[{a}] Fetch one {es_name} record by its EXACT key — "
+                        f"ONLY use this when you already have the precise key value(s) from a previous filter/search result. "
+                        f"Do NOT use for lookups or open-ended requests; use {a}_filter_{es_name} instead. "
+                        f"Requires ALL key field(s): {', '.join(keys) or 'none'}. "
+                        f"Example: {key_hint}."
                     ),
                     {
                         **key_schema,
@@ -536,6 +547,7 @@ class Bridge:
 
             try:
                 if op == "info":
+                    a_ = self._safe_alias(svc.alias)
                     result = {
                         "alias":              svc.alias,
                         "url":                svc.url,
@@ -552,6 +564,11 @@ class Bridge:
                         "max_items":          svc.max_items,
                         "max_response_bytes": svc.max_response_size,
                         "legacy_dates":       svc.legacy_dates,
+                        "_tool_guide": (
+                            f"For any lookup or open-ended request use {a_}_filter_<EntitySet>. "
+                            f"Use {a_}_get_<EntitySet> ONLY when you already have the exact key. "
+                            f"Use {a_}_schema_<EntitySet> to see field names and types before filtering."
+                        ),
                     }
 
                 elif op == "schema":
@@ -560,6 +577,17 @@ class Bridge:
                     keys  = es.get("keys", [])
                     nav   = es.get("nav_props", [])
                     caps  = es.get("capabilities", {})
+                    a_    = self._safe_alias(svc.alias)
+                    # Build hint only for tools that actually exist
+                    _possible = []
+                    if svc.op_filter.allows(OP_FILTER):  _possible.append(f"{a_}_filter_{target}")
+                    if svc.op_filter.allows(OP_GET):     _possible.append(f"{a_}_get_{target}")
+                    if svc.op_filter.allows(OP_CREATE) and caps.get("creatable", True):
+                        _possible.append(f"{a_}_create_{target}")
+                    if svc.op_filter.allows(OP_UPDATE) and caps.get("updatable", True):
+                        _possible.append(f"{a_}_update_{target}")
+                    if svc.op_filter.allows(OP_DELETE) and caps.get("deletable", True):
+                        _possible.append(f"{a_}_delete_{target}")
                     result = {
                         "entity_set": target,
                         "keys":       keys,
@@ -571,16 +599,13 @@ class Bridge:
                                 "label":    v.get("label") or k,
                                 "nullable": v["nullable"],
                                 "key":      k in keys,
+                                "computed": v.get("computed", False),
                             }
                             for k, v in props.items()
                             if not v.get("internal")
                         ],
                         "nav_props":  nav,
-                        "_mcp_hint":  (
-                            f"Use {self._safe_alias(svc.alias)}_filter_{target} to list records, "
-                            f"{self._safe_alias(svc.alias)}_get_{target} to fetch one by key, "
-                            f"{self._safe_alias(svc.alias)}_create_{target} / {self._safe_alias(svc.alias)}_update_{target} to write."
-                        ),
+                        "_mcp_hint":  f"Available tools for this entity: {', '.join(_possible)}" if _possible else "No tools available for this entity.",
                     }
 
                 elif op == "filter":

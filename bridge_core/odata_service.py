@@ -451,12 +451,108 @@ class ODataService:
                 if a["name"] in self.include_actions
             ]
 
+        # ---- Post-process: parse external <Annotations Target="..."> blocks ----
+        # SAP always places capability annotations in external <Annotations> blocks
+        # using the OData v4 namespace — even in v2 hybrid metadata.  Run for all
+        # service versions.
+        self._apply_external_annotations(schema, ns, schema_is_v4=is_v4)
+
         sys.stderr.write(
             f"[bridge] {self.alias}: "
             f"OData v{self.odata_version}, "
             f"{len(self.entity_sets)} entity sets, "
             f"{len(self.actions)} actions/functions\n"
         )
+
+    # ------------------------------------------------------------------ #
+    # External annotation processing (OData v4)                           #
+    # ------------------------------------------------------------------ #
+
+    def _apply_external_annotations(self, schema, ns: dict, schema_is_v4: bool = True) -> None:
+        """
+        Parse <Annotations Target="..."> blocks in the schema to:
+          1. Pick up capability restrictions on entity sets that SAP places
+             outside the <EntitySet> element (common in both v4 and v2-hybrid).
+          2. Detect SAP__core.Computed / Org.OData.Core.V1.Computed key props
+             so we can suppress create/get-by-key tools for server-generated keys.
+
+        SAP always uses the OData v4 namespace for external <Annotations> blocks,
+        even in v2 (ADO-namespace) metadata — so we search with the v4 ns here.
+        """
+        # External annotations always use the OData v4 namespace.
+        edm_ns = "http://docs.oasis-open.org/odata/ns/edm"
+
+        # --- Step 1: collect computed property names per entity type ---
+        # Target looks like "Alias.EntityTypeName/PropertyName"
+        computed_by_type: dict[str, set] = {}
+        for ann_block in schema.findall(f"{{{edm_ns}}}Annotations"):
+            target = ann_block.get("Target", "")
+            if "/" not in target:
+                continue
+            type_part, prop_name = target.split("/", 1)
+            type_local = type_part.split(".")[-1]
+            for ann in ann_block.findall(f"{{{edm_ns}}}Annotation"):
+                term = ann.get("Term", "")
+                if term.endswith(".Computed") or term == "Org.OData.Core.V1.Computed":
+                    if type_local not in computed_by_type:
+                        computed_by_type[type_local] = set()
+                    computed_by_type[type_local].add(prop_name)
+
+        # Apply computed flag to entity set props (shallow-copy shares inner dicts)
+        for es_name, es_data in self.entity_sets.items():
+            props = es_data["props"]
+            for type_local, computed_props in computed_by_type.items():
+                for pname in computed_props:
+                    if pname in props:
+                        props[pname]["computed"] = True
+
+        # --- Step 2: parse entity-set-level capability <Annotations> blocks ---
+        # Target looks like "Alias.ContainerName/EntitySetName"
+        for ann_block in schema.findall(f"{{{edm_ns}}}Annotations"):
+            target = ann_block.get("Target", "")
+            if "/" not in target:
+                continue
+            _, es_name = target.split("/", 1)
+            if es_name not in self.entity_sets:
+                continue
+            caps = self.entity_sets[es_name]["capabilities"]
+            for ann in ann_block.findall(f"{{{edm_ns}}}Annotation"):
+                term = ann.get("Term", "")
+                rec  = ann.find(f"{{{edm_ns}}}Record")
+                if rec is None:
+                    continue
+                if term.endswith("SearchRestrictions"):
+                    for pv in rec.findall(f"{{{edm_ns}}}PropertyValue"):
+                        if pv.get("Property") == "Searchable":
+                            caps["searchable"] = pv.get("Bool", "false").lower() == "true"
+                elif term.endswith("InsertRestrictions"):
+                    for pv in rec.findall(f"{{{edm_ns}}}PropertyValue"):
+                        if pv.get("Property") == "Insertable":
+                            b = pv.get("Bool", "")
+                            if b:  # only override for static bool, not Path
+                                caps["creatable"] = b.lower() != "false"
+                elif term.endswith("UpdateRestrictions"):
+                    for pv in rec.findall(f"{{{edm_ns}}}PropertyValue"):
+                        if pv.get("Property") == "Updatable":
+                            b = pv.get("Bool", "")
+                            if b:
+                                caps["updatable"] = b.lower() != "false"
+                elif term.endswith("DeleteRestrictions"):
+                    for pv in rec.findall(f"{{{edm_ns}}}PropertyValue"):
+                        if pv.get("Property") == "Deletable":
+                            b = pv.get("Bool", "")
+                            if b:
+                                caps["deletable"] = b.lower() != "false"
+
+        # --- Step 3: if ALL key properties are Computed → server-assigned, so create is
+        # not meaningful (no input accepted for keys). GET by key still works fine once
+        # you have the key value from a filter result — only suppress create.
+        if schema_is_v4:
+            for es_name, es_data in self.entity_sets.items():
+                keys  = es_data["keys"]
+                props = es_data["props"]
+                if keys and all(props.get(k, {}).get("computed", False) for k in keys):
+                    es_data["capabilities"]["creatable"] = False
 
     # ------------------------------------------------------------------ #
     # OData operations                                                     #
