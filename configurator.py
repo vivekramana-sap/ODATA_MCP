@@ -27,7 +27,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICES_PATH = os.path.join(BASE_DIR, "services.json")
 CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.mtaext")
 DEPLOY_SCRIPT = os.path.join(BASE_DIR, "deploy.sh")
-UI_PATH = os.path.join(BASE_DIR, "ui", "index_react.html")
+UI_PORT = int(os.environ.get("UI_PORT", "3001"))
 MCP_PORT = int(os.environ.get("MCP_PORT", "7777"))
 HTTP_TIMEOUT = 20
 CF_APP_NAME = "jam-odata-mcp-bridge-v2"
@@ -553,7 +553,17 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
 
         if path in ("/", "/index.html", "/index_react.html"):
-            self._serve_file(UI_PATH, "text/html; charset=utf-8")
+            host = self.headers.get("Host", "")
+            import re
+            bas_match = re.match(r"^port\d+(-[\w\-.]+)$", host)
+            if bas_match:
+                ui_url = f"https://port{UI_PORT}{bas_match.group(1)}"
+            else:
+                ui_url = f"http://localhost:{UI_PORT}"
+            self.send_response(302)
+            self._cors()
+            self.send_header("Location", ui_url)
+            self.end_headers()
             return
 
         # All /api/* endpoints require auth

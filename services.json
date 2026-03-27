@@ -45,5 +45,14 @@
       "A_ProductDescription",
       "A_Product"
     ]
+  },
+  {
+    "alias": "article",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_PRODUCT_SRV/",
+    "username": "nagarajv",
+    "password": "Thengadeep@17",
+    "passthrough": true,
+    "readonly": false,
+    "group": "products"
   }
 ]

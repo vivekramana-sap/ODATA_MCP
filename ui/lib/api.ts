@@ -55,3 +55,7 @@ export const getBtpHealth = () => request<BtpHealth>('/api/btp/health')
 
 // ── Deploy ─────────────────────────────────────────────────────────────────
 export const deploy = () => request<DeployResult>('/api/deploy', json('POST', {}))
+
+export function deployEventSource(): EventSource {
+  return new EventSource('/api/deploy')
+}

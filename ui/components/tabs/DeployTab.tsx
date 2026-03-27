@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { showToast } from '@/components/Toast'
+import { deployEventSource } from '@/lib/api'
 
 interface Checklist {
   cli?:       { ok: boolean; detail?: string }
@@ -66,7 +67,7 @@ export default function DeployTab() {
   const handleDeploy = () => {
     if (!checklist?.logged_in?.ok) { showToast('Log in to CF first', 'error'); return }
     setLogs([]); setExitCode(null); setDeploying(true)
-    const es = new EventSource('/api/deploy')
+    const es = deployEventSource()
     es.onmessage = e => {
       const d: { line?: string; exit?: number } = JSON.parse(e.data)
       if (d.line !== undefined) setLogs(l => [...l, d.line!])
