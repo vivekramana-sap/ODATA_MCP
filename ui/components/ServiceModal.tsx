@@ -62,7 +62,6 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
     if (service) return { ...BLANK, ...service }
     return { ...BLANK, alias: genAlias(existingAliases), group: defaultGroup || '' }
   })
-  const [showAdvanced, setShowAdvanced] = useState(!!(service?.username && !service.username.startsWith('${')))
   const [probe, setProbe]       = useState<ProbeResult | null>(null)
   const [probing, setProbing]   = useState(false)
   const [selEs, setSelEs]       = useState<Set<string> | null>(null)
@@ -71,6 +70,7 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
     () => !!(service?.group && !existingGroups.includes(service.group))
   )
   const [rememberCreds, setRememberCreds] = useState(false)
+  const [showEntityFilter, setShowEntityFilter] = useState(false)
 
   // Load saved credentials on mount (new service only)
   useEffect(() => {
@@ -138,189 +138,187 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
       onClick={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-surface-2 border border-border rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center mb-5">
+      <div className="bg-surface-2 border border-border rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl">
+        {/* Sticky header */}
+        <div className="flex items-center px-6 pt-5 pb-4 border-b border-border shrink-0">
           <h2 className="text-base font-semibold flex-1">{isEdit ? 'Edit Service' : 'Add Service'}</h2>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary text-lg leading-none">✕</button>
         </div>
 
-        {/* Alias */}
-        <Field label="Alias" required>
-          <input
-            className="input w-full font-mono"
-            value={form.alias}
-            onChange={e => set('alias', e.target.value.replace(/\s/g, '_'))}
-            placeholder="e.g. sales_order"
-          />
-          <p className="hint mt-1">
-            Short unique name. Becomes the prefix for every generated tool —
-            e.g. <code className="font-mono text-text-secondary">{form.alias || 'alias'}_filter_SalesOrder</code>
-          </p>
-        </Field>
+        {/* Scrollable body */}
+        <div className="overflow-y-auto px-6 py-4 flex-1 space-y-4">
 
-        {/* URL */}
-        <Field label="OData Service URL" required>
-          <input className="input w-full" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://host/sap/opu/odata4/…" />
-        </Field>
-
-        {/* Options */}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Read-only">
-            <Toggle checked={!!form.readonly} onChange={v => set('readonly', v)} label="No write / delete tools" />
-          </Field>
-          <Field label="Default Result Limit">
+          {/* Alias */}
+          <Field label="Alias" required>
             <input
-              type="number" min={1} max={10000}
-              className="input w-full"
-              value={form.default_top ?? 50}
-              onChange={e => set('default_top', e.target.value ? parseInt(e.target.value) : 50)}
+              className="input w-full font-mono"
+              value={form.alias}
+              onChange={e => set('alias', e.target.value.replace(/\s/g, '_'))}
+              placeholder="e.g. sales_order"
             />
-          </Field>
-        </div>
-
-        {/* Credentials */}
-        <div className="mb-4">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(v => !v)}
-            className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors"
-          >
-            <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
-            OData credentials
-          </button>
-          {showAdvanced && (
-            <div className="mt-3 p-3 bg-surface-1 border border-border rounded-lg space-y-3">
-              <p className="text-xs text-text-muted">
-                Use env-var placeholders <code className="font-mono text-text-secondary">${'{ODATA_USERNAME}'}</code> &amp; <code className="font-mono text-text-secondary">${'{ODATA_PASSWORD}'}</code>, or enter static values.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Username">
-                  <input className="input w-full" value={form.username || ''} onChange={e => set('username', e.target.value)} placeholder="${ODATA_USERNAME}" />
-                </Field>
-                <Field label="Password">
-                  <RevealInput value={form.password || ''} onChange={v => set('password', v)} placeholder="${ODATA_PASSWORD}" />
-                </Field>
-              </div>
-              <div className="flex items-center justify-between">
-                <Field label="Passthrough Auth">
-                  <Toggle checked={!!form.passthrough} onChange={v => set('passthrough', v)} label="Forward caller's token to OData" />
-                </Field>
-                <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none shrink-0 mt-5">
-                  <input
-                    type="checkbox"
-                    checked={rememberCreds}
-                    onChange={e => setRememberCreds(e.target.checked)}
-                    className="accent-gold"
-                  />
-                  Remember locally
-                </label>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Group */}
-        <Field label="MCP Group">
-          <select
-            className="input w-full"
-            value={groupIsNew ? '__new__' : (form.group || '')}
-            onChange={e => {
-              const v = e.target.value
-              if (v === '__new__') {
-                setGroupIsNew(true)
-                set('group', '')
-              } else {
-                setGroupIsNew(false)
-                set('group', v)
-              }
-            }}
-          >
-            <option value="">/mcp — default endpoint</option>
-            {existingGroups.map(g => (
-              <option key={g} value={g}>/mcp/{g}</option>
-            ))}
-            <option value="__new__">+ New group…</option>
-          </select>
-          {groupIsNew && (
-            <input
-              className="input w-full font-mono mt-2"
-              value={form.group || ''}
-              onChange={e => set('group', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-              placeholder="group-name  (letters, digits, - and _)"
-              autoFocus
-            />
-          )}
-          <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-surface-1 border border-border rounded-lg">
-            <span className="text-xs text-text-muted shrink-0">Routes to:</span>
-            <code className="font-mono text-xs text-gold">
-              {form.group ? `/mcp/${form.group}` : '/mcp'}
-            </code>
-          </div>
-        </Field>
-
-        {/* Probe section */}
-        <div className="border-t border-border pt-4 mt-2">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-xs font-semibold text-text-muted uppercase tracking-wider flex-1">Entity & Action Filter</span>
-            {!probe && form.include && (
-              <span className="badge-gold text-xs">{form.include.length} entities</span>
-            )}
-            <button
-              onClick={handleProbe}
-              disabled={probing || !form.url.trim()}
-              className="px-2.5 py-1 text-xs rounded border border-border hover:border-gold hover:text-gold disabled:opacity-50 transition-colors"
-            >
-              {probing ? 'Probing…' : 'Test & Probe'}
-            </button>
-          </div>
-
-          {!probe && (
-            <p className="text-xs text-text-muted">
-              {form.include
-                ? `Current filter: ${form.include.length} entity set(s). Click Probe to modify.`
-                : 'Probe the service to select entity sets and actions to expose as tools.'}
+            <p className="hint mt-1">
+              Tool prefix — e.g. <code className="font-mono text-text-secondary">{form.alias || 'alias'}_filter_SalesOrder</code>
             </p>
-          )}
+          </Field>
 
-          {probe && !probe.success && (
-            <div className="bg-surface-3 border border-status-red/30 rounded-lg p-3">
-              <p className="text-status-red font-medium text-sm mb-1">Connection failed</p>
-              <p className="text-xs text-text-secondary">{probe.error}</p>
-              {probe.hint === 'dns' && (
-                <p className="text-xs text-gold mt-2">Internal hostname — check VPN.</p>
-              )}
+          {/* URL */}
+          <Field label="OData Service URL" required>
+            <input className="input w-full" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://host/sap/opu/odata4/…" />
+          </Field>
+
+          {/* Group — always visible */}
+          <Field label="MCP Group / Endpoint">
+            <select
+              className="input w-full"
+              value={groupIsNew ? '__new__' : (form.group || '')}
+              onChange={e => {
+                const v = e.target.value
+                if (v === '__new__') {
+                  setGroupIsNew(true)
+                  set('group', '')
+                } else {
+                  setGroupIsNew(false)
+                  set('group', v)
+                }
+              }}
+            >
+              <option value="">/mcp — default (all services)</option>
+              {existingGroups.map(g => (
+                <option key={g} value={g}>/mcp/{g}</option>
+              ))}
+              <option value="__new__">+ Create new group…</option>
+            </select>
+            {groupIsNew && (
+              <input
+                className="input w-full font-mono mt-2"
+                value={form.group || ''}
+                onChange={e => set('group', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                placeholder="group-name  (letters, digits, - and _)"
+                autoFocus
+              />
+            )}
+            <div className="mt-1.5 flex items-center gap-2 px-2.5 py-1.5 bg-surface-1 border border-border rounded text-xs">
+              <span className="text-text-muted">→</span>
+              <code className="font-mono text-gold">{form.group ? `/mcp/${form.group}` : '/mcp'}</code>
+              <span className="text-text-muted">on bridge</span>
             </div>
-          )}
+          </Field>
 
-          {probe?.success && selEs !== null && (
-            <div className="space-y-3 mt-1">
-              {allEs.length > 0 && (
-                <CheckList
-                  title={`Entity Sets (${selEs.size}/${allEs.length})`}
-                  items={allEs.map(e => ({ id: e.name, label: e.name, meta: e.keys?.length ? `[${e.keys.join(',')}]` : '' }))}
-                  selected={selEs}
-                  onSelectAll={() => setSelEs(new Set(allEs.map(e => e.name)))}
-                  onSelectNone={() => setSelEs(new Set())}
-                  onToggle={toggleEs}
+          {/* Credentials — always visible */}
+          <div className="rounded-lg border border-border bg-surface-1 p-4 space-y-3">
+            <p className="text-xs font-semibold text-text-secondary mb-1">OData Credentials</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Username">
+                <input
+                  className="input w-full"
+                  value={form.username || ''}
+                  onChange={e => set('username', e.target.value)}
+                  placeholder="${ODATA_USERNAME}"
                 />
-              )}
-              {allAct.length > 0 && (
-                <CheckList
-                  title={`Actions (${selAct?.size ?? 0}/${allAct.length})`}
-                  items={allAct.map(a => ({ id: a, label: a, meta: '' }))}
-                  selected={selAct ?? new Set()}
-                  onSelectAll={() => setSelAct(new Set(allAct))}
-                  onSelectNone={() => setSelAct(new Set())}
-                  onToggle={toggleAct}
-                />
-              )}
+              </Field>
+              <Field label="Password">
+                <RevealInput value={form.password || ''} onChange={v => set('password', v)} placeholder="${ODATA_PASSWORD}" />
+              </Field>
             </div>
-          )}
-        </div>
+            <div className="flex items-center justify-between pt-1">
+              <Toggle checked={!!form.passthrough} onChange={v => set('passthrough', v)} label="Passthrough auth (forward caller token)" />
+              <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberCreds}
+                  onChange={e => setRememberCreds(e.target.checked)}
+                  className="accent-gold"
+                />
+                Remember
+              </label>
+            </div>
+          </div>
 
-        {/* Footer */}
-        <div className="flex justify-end gap-2 mt-6">
+          {/* Options row */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Read-only">
+              <Toggle checked={!!form.readonly} onChange={v => set('readonly', v)} label="No write / delete tools" />
+            </Field>
+            <Field label="Default Result Limit">
+              <input
+                type="number" min={1} max={10000}
+                className="input w-full"
+                value={form.default_top ?? 50}
+                onChange={e => set('default_top', e.target.value ? parseInt(e.target.value) : 50)}
+              />
+            </Field>
+          </div>
+
+          {/* Entity & Action Filter — collapsible */}
+          <div className="border-t border-border pt-3">
+            <button
+              type="button"
+              onClick={() => setShowEntityFilter(v => !v)}
+              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors w-full mb-2"
+            >
+              <span className={`transition-transform ${showEntityFilter ? 'rotate-90' : ''}`}>▶</span>
+              <span className="flex-1 text-left font-semibold uppercase tracking-wider">Entity &amp; Action Filter</span>
+              {form.include && <span className="text-gold">{form.include.length} entities</span>}
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); handleProbe() }}
+                disabled={probing || !form.url.trim()}
+                className="px-2.5 py-1 text-xs rounded border border-border hover:border-gold hover:text-gold disabled:opacity-50 transition-colors"
+              >
+                {probing ? 'Probing…' : 'Test & Probe'}
+              </button>
+            </button>
+
+            {showEntityFilter && (
+              <div className="mt-1">
+                {!probe && (
+                  <p className="text-xs text-text-muted">
+                    {form.include
+                      ? `Current: ${form.include.length} entity set(s). Probe to modify.`
+                      : 'Probe the service to pick entity sets & actions.'}
+                  </p>
+                )}
+                {probe && !probe.success && (
+                  <div className="bg-surface-3 border border-status-red/30 rounded-lg p-3">
+                    <p className="text-status-red font-medium text-sm mb-1">Connection failed</p>
+                    <p className="text-xs text-text-secondary">{probe.error}</p>
+                    {probe.hint === 'dns' && (
+                      <p className="text-xs text-gold mt-2">Internal hostname — check VPN.</p>
+                    )}
+                  </div>
+                )}
+                {probe?.success && selEs !== null && (
+                  <div className="space-y-3">
+                    {allEs.length > 0 && (
+                      <CheckList
+                        title={`Entity Sets (${selEs.size}/${allEs.length})`}
+                        items={allEs.map(e => ({ id: e.name, label: e.name, meta: e.keys?.length ? `[${e.keys.join(',')}]` : '' }))}
+                        selected={selEs}
+                        onSelectAll={() => setSelEs(new Set(allEs.map(e => e.name)))}
+                        onSelectNone={() => setSelEs(new Set())}
+                        onToggle={toggleEs}
+                      />
+                    )}
+                    {allAct.length > 0 && (
+                      <CheckList
+                        title={`Actions (${selAct?.size ?? 0}/${allAct.length})`}
+                        items={allAct.map(a => ({ id: a, label: a, meta: '' }))}
+                        selected={selAct ?? new Set()}
+                        onSelectAll={() => setSelAct(new Set(allAct))}
+                        onSelectNone={() => setSelAct(new Set())}
+                        onToggle={toggleAct}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+        </div>{/* end scroll body */}
+
+        {/* Sticky footer */}
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border shrink-0">
           <button onClick={onClose} className="btn-ghost text-sm">Cancel</button>
           <button onClick={handleSave} disabled={!valid} className="btn-gold text-sm">Save</button>
         </div>
@@ -328,6 +326,7 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
     </div>
   )
 }
+
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
