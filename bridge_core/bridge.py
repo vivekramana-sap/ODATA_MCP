@@ -6,6 +6,8 @@ import json
 import re
 import sys
 
+_TOOL_NAME_RE = re.compile(r'[^a-zA-Z0-9_-]+')
+
 from .constants import (
     OP_FILTER,
     OP_SEARCH,
@@ -57,8 +59,15 @@ class Bridge:
                         f"[bridge] WARNING: tool[{i}] '{t['name']}' has invalid prop key: '{k}'\n"
                     )
 
+    @staticmethod
+    def _safe_alias(alias: str) -> str:
+        """Sanitize an alias for use in tool names (letters, digits, _ and - only)."""
+        safe = _TOOL_NAME_RE.sub('_', alias).strip('_')
+        return safe[:40] or 'svc'
+
     def _index_tool(self, svc: ODataService, name: str) -> None:
-        rest = name[len(svc.alias) + 1:]
+        prefix = self._safe_alias(svc.alias)
+        rest = name[len(prefix) + 1:]
         for op in ("filter", "search", "count", "get", "create", "update", "delete", "action"):
             if rest.startswith(op + "_"):
                 self._tool_map[name] = (svc, op, rest[len(op) + 1:])
@@ -207,7 +216,7 @@ class Bridge:
 
     def _gen_tools(self, svc: ODataService) -> list:
         tools:    list = []
-        a = svc.alias
+        a = self._safe_alias(svc.alias)  # sanitized for tool names
 
         # ---- Service info tool ----
         tools.append(self._make_tool(
@@ -568,9 +577,9 @@ class Bridge:
                         ],
                         "nav_props":  nav,
                         "_mcp_hint":  (
-                            f"Use {svc.alias}_filter_{target} to list records, "
-                            f"{svc.alias}_get_{target} to fetch one by key, "
-                            f"{svc.alias}_create_{target} / {svc.alias}_update_{target} to write."
+                            f"Use {self._safe_alias(svc.alias)}_filter_{target} to list records, "
+                            f"{self._safe_alias(svc.alias)}_get_{target} to fetch one by key, "
+                            f"{self._safe_alias(svc.alias)}_create_{target} / {self._safe_alias(svc.alias)}_update_{target} to write."
                         ),
                     }
 

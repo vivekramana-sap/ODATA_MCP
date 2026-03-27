@@ -7,3 +7,6 @@ credentials.mtaext.bak
 *.credentials
 *.mtar
 mta_archives/
+
+# MCP Inspector (local testing tool, not part of the project)
+mcp-inspector/
