@@ -773,7 +773,8 @@ class ODataService:
         return result
 
     def get(self, entity_set: str, key: str, args: dict, auth: str = "") -> dict:
-        qs_parts: dict = dict(self._v2_params())
+        # Single-entity requests must not include $inlinecount (SAP rejects it with 400)
+        qs_parts: dict = {"$format": "json"} if self.odata_version == "2" else {}
         if args.get("$select"):
             qs_parts["$select"] = args["$select"]
         if args.get("$expand"):
