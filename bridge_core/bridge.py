@@ -264,10 +264,15 @@ class Bridge:
             key_hint     = self._key_predicate_hint(keys, props)
             filter_desc  = self._filter_desc(user_props, keys, svc.odata_version)
             expand_desc  = (
-                f"Navigation properties to expand: {', '.join(nav_props[:5])}"
-                if nav_props else "Navigation properties to expand"
+                f"Comma-separated navigation properties to inline in the response. "
+                f"Use this to fetch related data in a single call instead of separate queries. "
+                f"Available: {', '.join(nav_props)}."
+                if nav_props else "Navigation properties to expand (none available for this entity)."
             )
-            nav_hint = f" Navigation (expandable): {', '.join(nav_props)}." if nav_props else ""
+            nav_hint = (
+                f" To fetch related data in one call use expand= with: {', '.join(nav_props)}."
+                if nav_props else ""
+            )
 
             key_schema     = {ODataService._safe_prop(k): self._prop_schema(k, {**v, "is_key": True})  for k, v in key_props.items()}
             non_key_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in non_key_props.items()}
@@ -313,12 +318,11 @@ class Bridge:
                 tools.append(self._make_tool(
                     f"{a}_filter_{es_name}",
                     (
-                        f"[{a}] Search/list/lookup {es_name} — USE THIS for any open-ended request "
-                        f"('get me a BP', 'find material X', 'show all orders for plant 1000'). "
-                        f"Also use when you don't have an exact key value yet. "
+                        f"[{a}] Search/list/lookup {es_name} — use for any open-ended request "
+                        f"or when you don't have an exact key value yet. "
                         f"Returns up to {svc.default_top} records by default "
-                        f"(server max: {svc.max_top}).{nav_hint} "
-                        f"Key fields: {', '.join(keys) or 'none'}. "
+                        f"(server max: {svc.max_top}). "
+                        f"Key fields: {', '.join(keys) or 'none'}.{nav_hint} "
                         f"Use skip+top for pagination; call {a}_count_{es_name} for total count."
                     ),
                     filter_props,
