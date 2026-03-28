@@ -11,7 +11,7 @@ Comprehensive feature comparison between the **Python v2** (`jam-odata-mcp-bridg
 | Total LoC (non-test) | **2,540** | **7,545** |
 | External dependencies | **0** (stdlib only) | Go std + `mapstructure` |
 | Package structure | 8 modules in `bridge_core/` | 12 packages in `internal/` |
-| Entry point | `server_new.py` (331 lines) | `cmd/odata-mcp/main.go` (612 lines) |
+| Entry point | `server.py` (331 lines) | `cmd/odata-mcp/main.go` (612 lines) |
 | Build artefact | Source files (no build step) | Single static binary |
 
 ### Module Breakdown

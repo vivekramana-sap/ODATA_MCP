@@ -8,7 +8,8 @@
     "redirect-uris": [
       "https://oauth.pstmn.io/v1/callback",
       "https://oauth.pstmn.io/v1/vscode-callback",
-      "https://global.consent.azure-apim.net/redirect/cr30d-5fodata-20mcp-20oauth-202-5fac33d5c460968720",
+      "https://global.consent.azure-apim.net/redirect/cr30d-5fodata-20mcp-20product-5fac33d5c460968720",
+      "https://global.consent.azure-apim.net/redirect/new-5fjam-20odata-20mcp-20v1-5fac33d5c460968720",
       "https://global.consent.azure-apim.net/redirect/cr30d-5fodata-20mcp-20auth-5fac33d5c460968720",
       "https://global.consent.azure-apim.net/redirect/cr30d-5fodata-20mcp-20oauth-5fac33d5c460968720",
       "https://global.consent.azure-apim.net/redirect/cr30d-5fodata-20mcp-20okta-5fac33d5c460968720",

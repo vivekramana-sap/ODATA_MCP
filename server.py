@@ -38,20 +38,20 @@ Module structure (bridge_core/ package):
     bridge.py       — Bridge class (tool generation, MCP dispatch)
     transports.py   — stdio transport, HTTP handler, trace mode
     config.py       — services.json loader
-  server_new.py     — Entry point (this file): argparse + main()
+  server.py        — Entry point (this file): argparse + main()
 
 Usage (stdio, Claude Desktop / Claude Code):
-    python3 server_new.py --config services.json --transport stdio
+    python3 server.py --config services.json --transport stdio
 
 Usage (HTTP, local dev):
-    python3 server_new.py --config services.json --port 7777
+    python3 server.py --config services.json --port 7777
 
 Usage (HTTP + Bearer token):
-    python3 server_new.py --config services.json --mcp-token mysecret
+    python3 server.py --config services.json --mcp-token mysecret
 
 Usage (BTP CF):
     Set env: PORT, ODATA_USERNAME, ODATA_PASSWORD, MCP_USERNAME, MCP_PASSWORD
-    python3 server_new.py --config services.json --passthrough
+    python3 server.py --config services.json --passthrough
 
 services.json example:
     [

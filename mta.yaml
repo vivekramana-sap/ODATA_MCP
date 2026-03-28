@@ -11,7 +11,7 @@ modules:
       buildpack: python_buildpack
       memory: 256M
       instances: 1
-      command: python3 server_new.py --host 0.0.0.0 --i-am-security-expert
+      command: python3 server.py --host 0.0.0.0 --i-am-security-expert
       health-check-type: http
       health-check-http-endpoint: /health
       routes:
@@ -41,8 +41,9 @@ modules:
         - "ui/"
         - "patches.py"
         - "deploy.sh"
-        - "docker"
-        - "server.py"
+        - "Dockerfile"
+        - "tests/"
+        - "docs/"
         - "__pycache__/"
         - "*.pyc"
         - ".git/"

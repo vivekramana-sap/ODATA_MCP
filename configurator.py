@@ -102,7 +102,7 @@ def _bridge_start() -> dict:
             return {"ok": False, "error": "Bridge already running", "pid": _bridge_proc.pid}
         try:
             creds = read_credentials()
-            cmd = [sys.executable, os.path.join(BASE_DIR, "server_new.py"),
+            cmd = [sys.executable, os.path.join(BASE_DIR, "server.py"),
                    "--config", SERVICES_PATH, "--port", str(MCP_PORT)]
             if creds.get("MCP_TOKEN"):
                 cmd += ["--mcp-token", creds["MCP_TOKEN"]]

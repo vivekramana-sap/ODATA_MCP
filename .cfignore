@@ -16,8 +16,10 @@ configurator.py
 ui/
 patches.py
 deploy.sh
-docker
-server.py
+Dockerfile
+tests/
+docs/
+
 
 # editor / tooling
 .claude/
