@@ -157,8 +157,9 @@ class Bridge:
         return ",".join(parts) if parts else "Id='VALUE'"
 
     @staticmethod
-    def _filter_desc(public_props: dict, keys: list) -> str:
-        """Build a rich OData v4 $filter description with type-aware examples."""
+    def _filter_desc(public_props: dict, keys: list, odata_version: str = "4") -> str:
+        """Build a $filter description with type-aware examples."""
+        is_v2 = odata_version == "2"
         ordered = (
             [(k, public_props[k]) for k in keys if k in public_props]
             + [(k, v) for k, v in public_props.items() if k not in keys]
@@ -170,10 +171,18 @@ class Bridge:
                        "Edm.Byte", "Edm.SByte"):
                 examples.append(f"{pname} eq 1")
             elif edm == "Edm.String":
-                examples.append(f"contains({pname},'ABC')")
+                if is_v2:
+                    examples.append(f"substringof('ABC',{pname}) eq true")
+                else:
+                    examples.append(f"contains({pname},'ABC')")
             elif edm == "Edm.Date":
                 examples.append(f"{pname} ge 2024-01-01")
-            elif edm in ("Edm.DateTimeOffset", "Edm.DateTime"):
+            elif edm == "Edm.DateTime":
+                if is_v2:
+                    examples.append(f"{pname} ge datetime'2024-01-01T00:00:00'")
+                else:
+                    examples.append(f"{pname} ge 2024-01-01T00:00:00Z")
+            elif edm == "Edm.DateTimeOffset":
                 examples.append(f"{pname} ge 2024-01-01T00:00:00Z")
             elif edm == "Edm.Boolean":
                 examples.append(f"{pname} eq true")
@@ -188,12 +197,22 @@ class Bridge:
             f"{keys[0]} eq 'VALUE'" if keys else "Field eq 'VALUE'"
         )
         field_list  = ", ".join(public_props.keys())
+        dt_note = (
+            "DateTime: datetime'2024-01-01T00:00:00'. "
+            if is_v2 else
+            "DateTime: 2024-01-01T00:00:00Z. "
+        )
+        str_note = (
+            "String: substringof('v',F) eq true, startswith(F,'v'). "
+            if is_v2 else
+            "String: contains(F,'v'), startswith(F,'v'), tolower(F) eq 'abc'. "
+        )
         return (
-            f"OData v4 $filter expression. "
+            f"OData $filter expression. "
             f"Operators: eq, ne, lt, le, gt, ge. "
             f"Logic: and, or, not. "
-            f"String: contains(F,'v'), startswith(F,'v'), tolower(F) eq 'abc'. "
-            f"Multi-value: F in ('A','B','C'). "
+            f"{str_note}"
+            f"{dt_note}"
             f"Null: F eq null. "
             f"Example: {example_str}. "
             f"Fields: {field_list}."
@@ -243,7 +262,7 @@ class Bridge:
 
             field_list   = ", ".join(user_props.keys())
             key_hint     = self._key_predicate_hint(keys, props)
-            filter_desc  = self._filter_desc(user_props, keys)
+            filter_desc  = self._filter_desc(user_props, keys, svc.odata_version)
             expand_desc  = (
                 f"Navigation properties to expand: {', '.join(nav_props[:5])}"
                 if nav_props else "Navigation properties to expand"
