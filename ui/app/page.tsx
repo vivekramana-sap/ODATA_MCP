@@ -23,7 +23,7 @@ export default function Home() {
 
   const refreshServices     = useCallback(() => getServices().then(setServices).catch(() => {}), [])
   const refreshCredentials  = useCallback(() => getCredentials().then(setCredentials).catch(() => {}), [])
-  const refreshTools        = useCallback(() => getTools().then(setTools).catch(() => {}), [])
+  const refreshTools        = useCallback(() => getTools().then(t => setTools(Array.isArray(t) ? t : [])).catch(() => setTools([])), [])
   const refreshBridgeStatus = useCallback(() => getBridgeStatus().then(setBridge).catch(() => {}), [])
 
   useEffect(() => {
@@ -42,6 +42,9 @@ export default function Home() {
     return () => clearInterval(t)
   }, [refreshBridgeStatus])
 
+  // Ensure tools is always an array (defensive against API returning non-array)
+  const safeTools = Array.isArray(tools) ? tools : []
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header
@@ -52,7 +55,7 @@ export default function Home() {
 
       <TabBar
         active={tab}
-        toolCount={tools.length}
+        toolCount={safeTools.length}
         onChange={setTab}
       />
 
@@ -61,7 +64,7 @@ export default function Home() {
           <ServicesTab
             services={services}
             bridge={bridge}
-            tools={tools}
+            tools={safeTools}
             onSave={refreshServices}
           />
         )}
@@ -73,7 +76,7 @@ export default function Home() {
         )}
         {tab === 'tools'       && (
           <ToolsTab
-            tools={tools}
+            tools={safeTools}
             bridge={bridge}
             services={services}
             mcpPort={MCP_PORT}

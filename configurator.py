@@ -95,13 +95,32 @@ def _bridge_endpoints() -> dict:
     return {"endpoints": endpoints}
 
 
+def _free_port(port: int) -> None:
+    """Kill any process listening on the given port (best-effort)."""
+    import signal as _signal
+    try:
+        result = subprocess.run(
+            ["ss", "-tlnpH", f"sport = :{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for pid_str in re.findall(r'pid=(\d+)', result.stdout):
+            try:
+                os.kill(int(pid_str), _signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    except Exception:
+        pass
+
+
 def _bridge_start() -> dict:
     global _bridge_proc, _bridge_log
     with _bridge_lock:
         if _bridge_proc and _bridge_proc.poll() is None:
             return {"ok": False, "error": "Bridge already running", "pid": _bridge_proc.pid}
+        _free_port(MCP_PORT)
         try:
             creds = read_credentials()
+            load_env_from_creds()
             cmd = [sys.executable, os.path.join(BASE_DIR, "server.py"),
                    "--config", SERVICES_PATH, "--port", str(MCP_PORT)]
             if creds.get("MCP_TOKEN"):
@@ -176,6 +195,9 @@ def write_services(data: list):
 # Credentials
 # ---------------------------------------------------------------------------
 
+_CRED_KEYS = ("MCP_USERNAME", "MCP_PASSWORD", "MCP_TOKEN", "ODATA_USERNAME", "ODATA_PASSWORD")
+
+
 def read_credentials() -> dict:
     try:
         with open(CREDENTIALS_PATH) as f:
@@ -183,7 +205,7 @@ def read_credentials() -> dict:
     except FileNotFoundError:
         return {}
     result = {}
-    for key in ("MCP_USERNAME", "MCP_PASSWORD", "MCP_TOKEN"):
+    for key in _CRED_KEYS:
         m = re.search(rf'^\s+{key}:\s+"?(.*?)"?\s*$', text, re.MULTILINE)
         result[key] = m.group(1) if m else ""
     return result
@@ -578,7 +600,9 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
             self._json(200, read_credentials())
 
         elif path == "/api/tools":
-            result = _mcp_call("tools/list")
+            token = read_credentials().get("MCP_TOKEN") or os.environ.get("MCP_TOKEN", "")
+            auth = f"Bearer {token}" if token else ""
+            result = _mcp_call("tools/list", auth=auth)
             if "result" in result:
                 self._json(200, {"tools": result["result"]["tools"]})
             else:
@@ -656,6 +680,10 @@ class ConfiguratorHandler(BaseHTTPRequestHandler):
         elif path == "/api/tools/call":
             data = self._body()
             auth = data.get("auth", "") or self.headers.get("Authorization", "")
+            if not auth:
+                token = read_credentials().get("MCP_TOKEN") or os.environ.get("MCP_TOKEN", "")
+                if token:
+                    auth = f"Bearer {token}"
             result = _mcp_call(
                 "tools/call",
                 {"name": data.get("name", ""), "arguments": data.get("arguments", {})},

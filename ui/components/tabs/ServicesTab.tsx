@@ -1,5 +1,7 @@
 'use client'
 
+const safeAlias = (alias: string) => alias.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'svc'
+
 import { useEffect, useState } from 'react'
 import type { ODataService, BridgeStatus, MCPTool, CfAppStatus, BtpHealth } from '@/lib/types'
 import { putServices, getCfApp, getBtpHealth } from '@/lib/api'
@@ -13,7 +15,7 @@ interface Props {
   onSave: () => void
 }
 
-export default function ServicesTab({ services, bridge, tools, onSave }: Props) {
+export default function ServicesTab({ services, bridge, tools = [], onSave }: Props) {
   const [modal, setModal] = useState<{ index: number; data: ODataService | null; defaultGroup?: string } | null>(null)
   const [cfApp,   setCfApp]   = useState<CfAppStatus | null>(null)
   const [btp,     setBtp]     = useState<BtpHealth | null>(null)
@@ -109,7 +111,7 @@ export default function ServicesTab({ services, bridge, tools, onSave }: Props) 
 
 // ── Accordion ──────────────────────────────────────────────────────────────
 
-function GroupAccordion({ services, tools, bridgeRunning, cfRoutes, onEdit, onDelete, onAddToGroup }: {
+function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, onEdit, onDelete, onAddToGroup }: {
   services: ODataService[]
   tools: MCPTool[]
   bridgeRunning: boolean
@@ -118,6 +120,7 @@ function GroupAccordion({ services, tools, bridgeRunning, cfRoutes, onEdit, onDe
   onDelete: (idx: number) => void
   onAddToGroup: (group: string) => void
 }) {
+  const safeTools = Array.isArray(tools) ? tools : []
   const groupMap = new Map<string, number[]>()
   services.forEach((svc, idx) => {
     const g = svc.group || ''
@@ -154,7 +157,7 @@ function GroupAccordion({ services, tools, bridgeRunning, cfRoutes, onEdit, onDe
         const svcCount = indices.length
         const toolCount = indices.reduce((sum, idx) => {
           const alias = services[idx].alias
-          return sum + tools.filter(t => t.name.startsWith(alias + '_')).length
+          return sum + safeTools.filter(t => t.name.startsWith(safeAlias(alias) + '_')).length
         }, 0)
 
         return (
@@ -211,7 +214,7 @@ function GroupAccordion({ services, tools, bridgeRunning, cfRoutes, onEdit, onDe
               <div className="divide-y divide-border/60">
                 {indices.map(idx => {
                   const svc = services[idx]
-                  const tc = tools.filter(t => t.name.startsWith(svc.alias + '_')).length
+                  const tc = safeTools.filter(t => t.name.startsWith(safeAlias(svc.alias) + '_')).length
                   return (
                     <ServiceRow
                       key={idx}

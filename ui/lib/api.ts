@@ -34,7 +34,7 @@ export const getCredentials  = ()               => request<Credentials>('/api/cr
 export const putCredentials  = (c: Credentials) => request<void>('/api/credentials', json('PUT', c))
 
 // ── Tools ──────────────────────────────────────────────────────────────────
-export const getTools    = ()                                    => request<MCPTool[]>('/api/tools')
+export const getTools    = ()                                    => request<{ tools: MCPTool[] }>('/api/tools').then(r => r.tools ?? [])
 export const callTool    = (name: string, args: Record<string, unknown>, auth: string) =>
   request<ToolCallResult>('/api/tools/call', json('POST', { name, arguments: args, auth }))
 

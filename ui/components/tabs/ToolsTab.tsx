@@ -1,5 +1,8 @@
 'use client'
 
+/** Mirror of bridge_core/bridge.py _safe_alias — replace non-alphanumeric/underscore/dash with '_'. */
+const safeAlias = (alias: string) => alias.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'svc'
+
 import { useEffect, useRef, useState } from 'react'
 import type { MCPTool, BridgeStatus, ODataService } from '@/lib/types'
 import { callTool, startBridge, stopBridge, getBridgeStatus, getBridgeLogs, getTools } from '@/lib/api'
@@ -14,7 +17,7 @@ interface Props {
   onToolsRefresh: () => void
 }
 
-export default function ToolsTab({ tools, bridge, services, mcpPort, onBridgeChange, onToolsRefresh }: Props) {
+export default function ToolsTab({ tools = [], bridge, services, mcpPort, onBridgeChange, onToolsRefresh }: Props) {
   const [search,      setSearch]      = useState('')
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [selected,    setSelected]    = useState<MCPTool | null>(null)
@@ -36,9 +39,10 @@ export default function ToolsTab({ tools, bridge, services, mcpPort, onBridgeCha
   const groups = [...new Set(services.map(s => s.group).filter(Boolean) as string[])].sort()
 
   // Map group → set of alias prefixes belonging to that group
-  const groupAliases = (g: string) => services.filter(s => s.group === g).map(s => s.alias)
+  const groupAliases = (g: string) => services.filter(s => s.group === g).map(s => safeAlias(s.alias))
 
-  const filtered = tools.filter(t => {
+  const safeTools = Array.isArray(tools) ? tools : []
+  const filtered = safeTools.filter(t => {
     const matchSearch = !search ||
       t.name.toLowerCase().includes(search.toLowerCase()) ||
       (t.description || '').toLowerCase().includes(search.toLowerCase())
@@ -168,20 +172,20 @@ export default function ToolsTab({ tools, bridge, services, mcpPort, onBridgeCha
         </div>
       )}
 
-      {bridge.running && tools.length === 0 && (
+      {bridge.running && safeTools.length === 0 && (
         <div className="text-xs border-l-2 border-status-orange bg-status-orange/5 px-3 py-2 rounded-r text-text-secondary flex items-center gap-3">
           No tools discovered. Check your services.
           <button onClick={onToolsRefresh} className="btn-ghost text-xs px-2 py-1">↻ Retry</button>
         </div>
       )}
 
-      {tools.length > 0 && (
+      {safeTools.length > 0 && (
         <div className="grid grid-cols-[280px_1fr] gap-4">
           {/* Tool list */}
           <div className="flex flex-col gap-0">
             <div className="flex items-baseline gap-2 mb-2">
               <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">
-                {filtered.length} {groupFilter ? `of ${tools.length}` : ''} Tools
+                {filtered.length} {groupFilter ? `of ${safeTools.length}` : ''} Tools
               </p>
             </div>
 
@@ -219,7 +223,7 @@ export default function ToolsTab({ tools, bridge, services, mcpPort, onBridgeCha
                 <p className="text-xs text-text-muted p-4 text-center">No matches</p>
               ) : filtered.map(t => {
                 // Find which group this tool's service belongs to
-                const ownerSvc = services.find(s => t.name.startsWith(s.alias + '_'))
+                const ownerSvc = services.find(s => t.name.startsWith(safeAlias(s.alias) + '_'))
                 const toolGroup = ownerSvc?.group
                 return (
                   <button
@@ -255,7 +259,7 @@ export default function ToolsTab({ tools, bridge, services, mcpPort, onBridgeCha
                   <div className="flex items-start gap-2">
                     <p className="font-mono text-sm font-bold text-gold flex-1">{selected.name}</p>
                     {(() => {
-                      const s = services.find(sv => selected.name.startsWith(sv.alias + '_'))
+                      const s = services.find(sv => selected.name.startsWith(safeAlias(sv.alias) + '_'))
                       return s?.group ? (
                         <span className="font-mono text-xs text-text-muted bg-surface-3 border border-border px-1.5 py-0.5 rounded shrink-0">
                           /mcp/{s.group}

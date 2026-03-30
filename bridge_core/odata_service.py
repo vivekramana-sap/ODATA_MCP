@@ -290,13 +290,22 @@ class ODataService:
                 ptype    = prop.get("Type", "Edm.String")
                 nullable = prop.get("Nullable", "true").lower() != "false"
                 label    = prop.get(f"{{{SAP_NS}}}label", "") or prop.get("sap:label", "")
-                props[pname] = {
+                pdata: dict = {
                     "type":       edm_to_json(ptype),
                     "edm_type":   ptype,
                     "nullable":   nullable,
                     "label":      label,
                     "internal":   _is_internal_prop(pname, ptype),
                 }
+                # v2 property-level sap:creatable / sap:updatable annotations
+                if not is_v4:
+                    sap_p_crt = prop.get(f"{{{SAP_NS}}}creatable", "") or prop.get("sap:creatable", "")
+                    sap_p_upd = prop.get(f"{{{SAP_NS}}}updatable", "") or prop.get("sap:updatable", "")
+                    if sap_p_crt == "false":
+                        pdata["sap_creatable"] = False
+                    if sap_p_upd == "false":
+                        pdata["sap_updatable"] = False
+                props[pname] = pdata
             nav_props_list = []
             for npelem in et.findall("edm:NavigationProperty", ns):
                 nav_info = {"name": npelem.get("Name", "")}

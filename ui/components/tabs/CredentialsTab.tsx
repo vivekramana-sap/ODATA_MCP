@@ -32,6 +32,17 @@ export default function CredentialsTab({ credentials, onSave }: Props) {
 
   return (
     <div className="max-w-lg space-y-4">
+      {/* OData backend creds */}
+      <section className="card">
+        <SectionTitle>OData Backend Credentials</SectionTitle>
+        <p className="text-xs text-text-muted mb-4 leading-relaxed">
+          Global SAP credentials used by services that reference <code className="font-mono text-text-secondary">{'{'}$ODATA_USERNAME{'}'}</code> / <code className="font-mono text-text-secondary">{'{'}$ODATA_PASSWORD{'}'}</code> in their config.
+          Restart the bridge after changing these.
+        </p>
+        <CredField label="ODATA_USERNAME" hint="SAP system username (used by ${ODATA_USERNAME} in services.json)" value={form.ODATA_USERNAME || ''} onChange={v => set('ODATA_USERNAME', v)} />
+        <CredField label="ODATA_PASSWORD" hint="SAP system password"                                               value={form.ODATA_PASSWORD || ''} onChange={v => set('ODATA_PASSWORD', v)} secret />
+      </section>
+
       {/* MCP gateway creds */}
       <section className="card">
         <SectionTitle>MCP Gateway Credentials</SectionTitle>

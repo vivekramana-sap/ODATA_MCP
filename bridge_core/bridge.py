@@ -260,6 +260,10 @@ class Bridge:
             non_key_props = {k: v for k, v in user_props.items() if k not in keys}
             key_props     = {k: v for k, v in user_props.items() if k in keys}
 
+            # Props that SAP allows in create/update bodies (v2 sap:creatable/updatable)
+            creatable_non_key = {k: v for k, v in non_key_props.items() if v.get("sap_creatable", True)}
+            updatable_non_key = {k: v for k, v in non_key_props.items() if v.get("sap_updatable", True)}
+
             field_list   = ", ".join(user_props.keys())
             key_hint     = self._key_predicate_hint(keys, props)
             filter_desc  = self._filter_desc(user_props, keys, svc.odata_version)
@@ -276,9 +280,13 @@ class Bridge:
 
             key_schema     = {ODataService._safe_prop(k): self._prop_schema(k, {**v, "is_key": True})  for k, v in key_props.items()}
             non_key_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in non_key_props.items()}
+            creatable_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in creatable_non_key.items()}
+            updatable_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in updatable_non_key.items()}
 
             key_map     = {ODataService._safe_prop(k): k for k in key_props}
             non_key_map = {ODataService._safe_prop(k): k for k in non_key_props}
+            creatable_map = {ODataService._safe_prop(k): k for k in creatable_non_key}
+            updatable_map = {ODataService._safe_prop(k): k for k in updatable_non_key}
 
             # --- schema discovery tool ---
             # Only generate it when there are other tools for this entity set
@@ -380,17 +388,16 @@ class Bridge:
             # --- create ---
             if svc.op_filter.allows(OP_CREATE) and caps.get("creatable", True):
                 tname = f"{a}_create_{es_name}"
-                self._prop_maps[tname] = non_key_map
                 create_required = [
-                    ODataService._safe_prop(k) for k, v in non_key_props.items()
+                    ODataService._safe_prop(k) for k, v in creatable_non_key.items()
                     if not v.get("nullable", True)
                 ]
                 key_required_for_create = [
                     ODataService._safe_prop(k) for k in keys
                     if not key_props.get(k, {}).get("nullable", True)
                 ]
-                create_schema = {**key_schema, **non_key_schema} if key_required_for_create else non_key_schema
-                create_prop_map = {**key_map, **non_key_map} if key_required_for_create else non_key_map
+                create_schema = {**key_schema, **creatable_schema} if key_required_for_create else creatable_schema
+                create_prop_map = {**key_map, **creatable_map} if key_required_for_create else creatable_map
                 all_create_required = (key_required_for_create + create_required) or None
                 self._prop_maps[tname] = create_prop_map
                 key_note = (
@@ -412,7 +419,7 @@ class Bridge:
             # --- update ---
             if svc.op_filter.allows(OP_UPDATE) and caps.get("updatable", True):
                 tname = f"{a}_update_{es_name}"
-                self._prop_maps[tname] = {**key_map, **non_key_map}
+                self._prop_maps[tname] = {**key_map, **updatable_map}
                 update_method_schema = {
                     "_method": {
                         "type":        "string",
@@ -432,7 +439,7 @@ class Bridge:
                     ),
                     {
                         **key_schema,
-                        **non_key_schema,
+                        **updatable_schema,
                         **update_method_schema,
                     },
                     required=list(key_schema.keys()),

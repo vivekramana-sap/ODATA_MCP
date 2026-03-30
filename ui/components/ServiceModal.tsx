@@ -251,10 +251,12 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
 
           {/* Entity & Action Filter — collapsible */}
           <div className="border-t border-border pt-3">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setShowEntityFilter(v => !v)}
-              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors w-full mb-2"
+              onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setShowEntityFilter(v => !v)}
+              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors w-full mb-2 cursor-pointer"
             >
               <span className={`transition-transform ${showEntityFilter ? 'rotate-90' : ''}`}>▶</span>
               <span className="flex-1 text-left font-semibold uppercase tracking-wider">Entity &amp; Action Filter</span>
@@ -267,7 +269,7 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
               >
                 {probing ? 'Probing…' : 'Test & Probe'}
               </button>
-            </button>
+            </div>
 
             {showEntityFilter && (
               <div className="mt-1">
