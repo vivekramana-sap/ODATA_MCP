@@ -31,10 +31,13 @@ from bridge_core.bridge import Bridge
 
 def _make_svc(edmx: bytes, alias: str = "svc", **kwargs) -> ODataService:
     mock_resp = MagicMock()
-    mock_resp.read.return_value = edmx
-    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-    mock_resp.__exit__ = MagicMock(return_value=False)
-    with patch.object(ODataService, "_open", return_value=mock_resp):
+    mock_resp.content = edmx
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.headers = {}
+    with patch("bridge_core.odata_service.requests.Session") as MockSession:
+        mock_sess = MagicMock()
+        mock_sess.get.return_value = mock_resp
+        MockSession.return_value = mock_sess
         return ODataService(
             alias=alias,
             url="https://example.com/sap/opu/odata/test",
@@ -488,10 +491,10 @@ class TestToolDescriptions(unittest.TestCase):
         cls.bridge = Bridge([cls.svc])
         cls.tools = {t["name"]: t for t in cls.bridge._all_tools}
 
-    def test_filter_desc_mentions_use_this(self):
+    def test_filter_desc_mentions_open_ended(self):
         desc = self.tools["orders_filter_OrderSet"]["description"]
-        self.assertIn("USE THIS", desc,
-                      f"filter desc should contain 'USE THIS': {desc}")
+        self.assertIn("open-ended", desc,
+                      f"filter desc should mention 'open-ended' to guide LLMs: {desc}")
 
     def test_filter_desc_mentions_open_ended_examples(self):
         desc = self.tools["orders_filter_OrderSet"]["description"]

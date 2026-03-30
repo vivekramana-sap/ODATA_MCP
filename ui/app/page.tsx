@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BridgeStatus, Credentials, MCPTool, ODataService } from '@/lib/types'
 import { getBridgeStatus, getCredentials, getServices, getTools } from '@/lib/api'
 
@@ -42,6 +42,22 @@ export default function Home() {
     return () => clearInterval(t)
   }, [refreshBridgeStatus])
 
+  // Deploy snapshot — persisted in localStorage so ServicesTab can show new/modified/deployed badges
+  const [deployedSnapshot, setDeployedSnapshot] = useState<ODataService[]>(() => {
+    try {
+      const s = typeof window !== 'undefined' ? localStorage.getItem('odata_deployed_snapshot') : null
+      return s ? (JSON.parse(s) as ODataService[]) : []
+    } catch { return [] }
+  })
+  // Keep a ref so handleDeploySuccess always closes over the latest services without re-creating
+  const servicesRef = useRef<ODataService[]>(services)
+  useEffect(() => { servicesRef.current = services }, [services])
+  const handleDeploySuccess = useCallback(() => {
+    const snap = servicesRef.current
+    setDeployedSnapshot(snap)
+    try { localStorage.setItem('odata_deployed_snapshot', JSON.stringify(snap)) } catch { /* ignore */ }
+  }, [])
+
   // Ensure tools is always an array (defensive against API returning non-array)
   const safeTools = Array.isArray(tools) ? tools : []
 
@@ -66,6 +82,7 @@ export default function Home() {
             bridge={bridge}
             tools={safeTools}
             onSave={refreshServices}
+            deployedSnapshot={deployedSnapshot}
           />
         )}
         {tab === 'credentials' && (
@@ -84,7 +101,10 @@ export default function Home() {
             onToolsRefresh={refreshTools}
           />
         )}
-        {tab === 'deploy'      && <DeployTab />}
+        {/* DeployTab stays mounted across tab switches so streaming logs and deploy state are preserved */}
+        <div className={tab !== 'deploy' ? 'hidden' : ''}>
+          <DeployTab onDeploySuccess={handleDeploySuccess} />
+        </div>
       </main>
 
       <ToastContainer />

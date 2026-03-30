@@ -5,28 +5,12 @@
     "username": "nagarajv",
     "password": "Thengadeep@17",
     "passthrough": true,
+    "readonly": true,
+    "default_top": 5,
     "readonly_but_functions": true,
-    "default_top": 5,
     "max_top": 20,
-    "include_actions": [
-      "GenerateEAN_SG"
-    ],
+    "include_actions": [],
     "group": "ean"
-  },
-  {
-    "alias": "business partner",
-    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_BUSINESS_PARTNER/",
-    "username": "${ODATA_USERNAME}",
-    "password": "${ODATA_PASSWORD}",
-    "passthrough": true,
-    "readonly": false,
-    "default_top": 5,
-    "max_top": 20,
-    "include": [
-      "A_BusinessPartner",
-      "A_BusinessPartnerAddress"
-    ],
-    "group": "bp"
   },
   {
     "alias": "product",
@@ -49,5 +33,24 @@
       "GenerateEAN_E1"
     ],
     "group": "ean"
+  },
+  {
+    "alias": "bp",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_BUSINESS_PARTNER/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true,
+    "readonly": true,
+    "group": "bp"
+  },
+  {
+    "alias": "svc_001",
+    "url": "http://s4store-dev.jumbo.local:44300/sap/opu/odata/sap/API_PRODUCT_SRV/",
+    "username": "${ODATA_USERNAME}",
+    "password": "${ODATA_PASSWORD}",
+    "passthrough": true,
+    "readonly": true,
+    "group": "",
+    "include": []
   }
 ]

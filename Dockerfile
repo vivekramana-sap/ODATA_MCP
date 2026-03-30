@@ -10,7 +10,11 @@ RUN addgroup --system bridge && adduser --system --ingroup bridge bridge
 
 WORKDIR /app
 
-# Copy source (pure stdlib — no pip install needed)
+# Install dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source
 COPY server.py        ./
 COPY services.json    ./
 
@@ -27,13 +31,11 @@ EXPOSE 7777
 
 # Default: HTTP transport on localhost (override with env vars)
 ENV PORT=7777 \
-    TRANSPORT=http \
     LOG_FILE=/tmp/bridge.log \
     MAX_RESPONSE_SIZE=5242880
 
 ENTRYPOINT ["python3", "server.py"]
 CMD ["--config", "services.json",
-     "--transport", "http",
      "--host",      "0.0.0.0",
      "--port",      "7777",
      "--i-am-security-expert",

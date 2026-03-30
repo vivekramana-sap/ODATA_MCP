@@ -5,8 +5,7 @@ Bridge — manages multiple OData services, generates & dispatches MCP tools.
 import json
 import re
 import sys
-
-_TOOL_NAME_RE = re.compile(r'[^a-zA-Z0-9_-]+')
+import traceback
 
 from .constants import (
     OP_FILTER,
@@ -17,8 +16,47 @@ from .constants import (
     OP_DELETE,
     OP_ACTION,
 )
-from .helpers import _guard_params
+from .helpers import _guard_params, safe_prop_name
 from .odata_service import ODataService
+
+_TOOL_NAME_RE = re.compile(r'[^a-zA-Z0-9_-]+')
+
+_TYPE_HINTS: dict = {
+    "Edm.Date":           ("Format: YYYY-MM-DD (e.g. 2024-03-26).", "date"),
+    "Edm.DateTimeOffset": ("Format: ISO-8601 with timezone (e.g. 2024-03-26T00:00:00Z).", "date-time"),
+    "Edm.DateTime":       ("Format: ISO-8601 (e.g. 2024-03-26T00:00:00).", "date-time"),
+    "Edm.TimeOfDay":      ("Format: HH:MM:SS (e.g. 08:30:00).", "time"),
+    "Edm.Guid":           ("UUID \u2014 omit quotes in key predicates (e.g. Id=12345678-abcd-1234-ef00-123456789abc).", "uuid"),
+    "Edm.Decimal":        ("Decimal \u2014 use string format '9.99' for precision; avoid float literals.", None),
+    "Edm.Double":         ("Double-precision float (e.g. 3.14).", None),
+    "Edm.Single":         ("Single-precision float (e.g. 3.14).", None),
+    "Edm.Int64":          ("64-bit integer \u2014 pass as number, no quotes.", None),
+    "Edm.Int32":          ("32-bit integer \u2014 pass as number, no quotes.", None),
+    "Edm.Int16":          ("16-bit integer \u2014 pass as number, no quotes.", None),
+    "Edm.Byte":           ("Unsigned 8-bit integer (0\u2013255).", None),
+    "Edm.SByte":          ("Signed 8-bit integer (\u2212128\u2013127).", None),
+    "Edm.Binary":         ("Base64url-encoded binary string.", None),
+}
+
+_SAP_HINTS: dict = {
+    "plant": "1000", "werks": "1000",
+    "company": "1000", "bukrs": "1000",
+    "salesorg": "1000", "vkorg": "1000",
+    "material": "MAT-001", "matnr": "MAT-001",
+    "vendor": "V-001", "lifnr": "V-001",
+    "customer": "C-001", "kunnr": "C-001",
+    "ean": "1234567890128",
+    "year": "2024", "gjahr": "2024",
+    "period": "01", "monat": "01",
+}
+
+
+def _pop_key(svc: ODataService, target: str, args: dict) -> str:
+    """Pop key fields from args and return a comma-joined OData key predicate."""
+    return ",".join(
+        svc._wrap_guid_key(target, k, args.pop(k, ""))
+        for k in svc.entity_sets[target]["keys"]
+    )
 
 
 class Bridge:
@@ -51,13 +89,6 @@ class Bridge:
             tools.sort(key=lambda t: t["name"])
         self._all_tools = tools
 
-        _prop_re = re.compile(r'^[a-zA-Z0-9_.\-]{1,64}$')
-        for i, t in enumerate(self._all_tools):
-            for k in t.get("inputSchema", {}).get("properties", {}):
-                if not _prop_re.match(k):
-                    sys.stderr.write(
-                        f"[bridge] WARNING: tool[{i}] '{t['name']}' has invalid prop key: '{k}'\n"
-                    )
 
     @staticmethod
     def _safe_alias(alias: str) -> str:
@@ -92,24 +123,8 @@ class Bridge:
         if label and label != pname:
             desc_parts.append(label + ".")
 
-        TYPE_HINTS = {
-            "Edm.Date":           ("Format: YYYY-MM-DD (e.g. 2024-03-26).", "date"),
-            "Edm.DateTimeOffset": ("Format: ISO-8601 with timezone (e.g. 2024-03-26T00:00:00Z).", "date-time"),
-            "Edm.DateTime":       ("Format: ISO-8601 (e.g. 2024-03-26T00:00:00).", "date-time"),
-            "Edm.TimeOfDay":      ("Format: HH:MM:SS (e.g. 08:30:00).", "time"),
-            "Edm.Guid":           ("UUID — omit quotes in key predicates (e.g. Id=12345678-abcd-1234-ef00-123456789abc).", "uuid"),
-            "Edm.Decimal":        ("Decimal — use string format '9.99' for precision; avoid float literals.", None),
-            "Edm.Double":         ("Double-precision float (e.g. 3.14).", None),
-            "Edm.Single":         ("Single-precision float (e.g. 3.14).", None),
-            "Edm.Int64":          ("64-bit integer — pass as number, no quotes.", None),
-            "Edm.Int32":          ("32-bit integer — pass as number, no quotes.", None),
-            "Edm.Int16":          ("16-bit integer — pass as number, no quotes.", None),
-            "Edm.Byte":           ("Unsigned 8-bit integer (0–255).", None),
-            "Edm.SByte":          ("Signed 8-bit integer (−128–127).", None),
-            "Edm.Binary":         ("Base64url-encoded binary string.", None),
-        }
-        if edm_type in TYPE_HINTS:
-            hint, fmt = TYPE_HINTS[edm_type]
+        if edm_type in _TYPE_HINTS:
+            hint, fmt = _TYPE_HINTS[edm_type]
             desc_parts.append(hint)
             if fmt:
                 extra["format"] = fmt
@@ -126,17 +141,6 @@ class Bridge:
     @staticmethod
     def _key_predicate_hint(keys: list, props: dict) -> str:
         """Return a typed, realistic key predicate example string."""
-        _SAP_HINTS: dict = {
-            "plant": "1000", "werks": "1000",
-            "company": "1000", "bukrs": "1000",
-            "salesorg": "1000", "vkorg": "1000",
-            "material": "MAT-001", "matnr": "MAT-001",
-            "vendor": "V-001", "lifnr": "V-001",
-            "customer": "C-001", "kunnr": "C-001",
-            "ean": "1234567890128",
-            "year": "2024", "gjahr": "2024",
-            "period": "01", "monat": "01",
-        }
         parts: list = []
         for k in keys:
             edm = props.get(k, {}).get("edm_type", "Edm.String")
@@ -278,15 +282,13 @@ class Bridge:
                 if nav_props else ""
             )
 
-            key_schema     = {ODataService._safe_prop(k): self._prop_schema(k, {**v, "is_key": True})  for k, v in key_props.items()}
-            non_key_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in non_key_props.items()}
-            creatable_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in creatable_non_key.items()}
-            updatable_schema = {ODataService._safe_prop(k): self._prop_schema(k, v) for k, v in updatable_non_key.items()}
+            key_schema       = {safe_prop_name(k): self._prop_schema(k, {**v, "is_key": True}) for k, v in key_props.items()}
+            creatable_schema = {safe_prop_name(k): self._prop_schema(k, v) for k, v in creatable_non_key.items()}
+            updatable_schema = {safe_prop_name(k): self._prop_schema(k, v) for k, v in updatable_non_key.items()}
 
-            key_map     = {ODataService._safe_prop(k): k for k in key_props}
-            non_key_map = {ODataService._safe_prop(k): k for k in non_key_props}
-            creatable_map = {ODataService._safe_prop(k): k for k in creatable_non_key}
-            updatable_map = {ODataService._safe_prop(k): k for k in updatable_non_key}
+            key_map       = {safe_prop_name(k): k for k in key_props}
+            creatable_map = {safe_prop_name(k): k for k in creatable_non_key}
+            updatable_map = {safe_prop_name(k): k for k in updatable_non_key}
 
             # --- schema discovery tool ---
             # Only generate it when there are other tools for this entity set
@@ -389,11 +391,11 @@ class Bridge:
             if svc.op_filter.allows(OP_CREATE) and caps.get("creatable", True):
                 tname = f"{a}_create_{es_name}"
                 create_required = [
-                    ODataService._safe_prop(k) for k, v in creatable_non_key.items()
+                    safe_prop_name(k) for k, v in creatable_non_key.items()
                     if not v.get("nullable", True)
                 ]
                 key_required_for_create = [
-                    ODataService._safe_prop(k) for k in keys
+                    safe_prop_name(k) for k in keys
                     if not key_props.get(k, {}).get("nullable", True)
                 ]
                 create_schema = {**key_schema, **creatable_schema} if key_required_for_create else creatable_schema
@@ -502,7 +504,7 @@ class Bridge:
                     required_params.append("_entity_key")
 
                 for p in action["params"]:
-                    safe = ODataService._safe_prop(p["name"])
+                    safe = safe_prop_name(p["name"])
                     param_map[safe] = p["name"]
                     p_props[safe]   = self._prop_schema(p["name"], {
                         "edm_type": p.get("edm_type", "Edm.String"),
@@ -530,7 +532,7 @@ class Bridge:
     def handle(self, req: dict, auth_header: str = "") -> dict | None:
         method  = req.get("method", "")
         req_id  = req.get("id")
-        params  = req.get("params", {})
+        params  = req.get("params") or {}
 
         def ok(result):
             return {"jsonrpc": "2.0", "id": req_id, "result": result}
@@ -652,41 +654,20 @@ class Bridge:
                     )
 
                 elif op == "get":
-                    keys      = svc.entity_sets[target]["keys"]
-                    key_parts = []
-                    for k in keys:
-                        v = args.pop(k, "")
-                        key_parts.append(svc._wrap_guid_key(target, k, v))
-                    result = svc.get(
-                        target, ",".join(key_parts), args, auth=auth_header
-                    )
+                    result = svc.get(target, _pop_key(svc, target, args), args, auth=auth_header)
 
                 elif op == "create":
                     result = svc.create(target, args, auth=auth_header)
 
                 elif op == "update":
-                    keys      = svc.entity_sets[target]["keys"]
-                    key_parts = []
-                    for k in keys:
-                        v = args.pop(k, "")
-                        key_parts.append(svc._wrap_guid_key(target, k, v))
-                    method = args.pop("_method", "PATCH")
-                    if method not in ("PATCH", "MERGE", "PUT"):
-                        method = "PATCH"
-                    result = svc.update(
-                        target, ",".join(key_parts), args,
-                        method=method, auth=auth_header,
-                    )
+                    key = _pop_key(svc, target, args)
+                    http_method = args.pop("_method", "PATCH")
+                    if http_method not in ("PATCH", "MERGE", "PUT"):
+                        http_method = "PATCH"
+                    result = svc.update(target, key, args, method=http_method, auth=auth_header)
 
                 elif op == "delete":
-                    keys      = svc.entity_sets[target]["keys"]
-                    key_parts = []
-                    for k in keys:
-                        v = args.pop(k, "")
-                        key_parts.append(svc._wrap_guid_key(target, k, v))
-                    result = svc.delete(
-                        target, ",".join(key_parts), auth=auth_header,
-                    )
+                    result = svc.delete(target, _pop_key(svc, target, args), auth=auth_header)
 
                 elif op == "action":
                     args.pop("_entity_key", None)
@@ -696,8 +677,8 @@ class Bridge:
                     return err(-32601, f"Unknown op: {op}")
 
             except Exception as exc:
-                sys.stderr.write(f"[bridge] tool call error: {exc}\n")
-                return err(-32603, "Internal error processing tool call")
+                traceback.print_exc(file=sys.stderr)
+                return err(-32603, f"Internal error: {exc}")
 
             return ok({
                 "content": [

@@ -20,7 +20,7 @@ const post = (p: string, b: unknown) => api<Record<string, unknown>>(p, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
 })
 
-export default function DeployTab() {
+export default function DeployTab({ onDeploySuccess }: { onDeploySuccess?: () => void } = {}) {
   const [loginForm, setLoginForm] = useState({ api: 'https://api.cf.eu10.hana.ondemand.com', username: '', password: '', org: '', space: '' })
   const [loginLoading, setLoginLoading] = useState(false)
   const [loginOut, setLoginOut] = useState<string>('')
@@ -76,7 +76,7 @@ export default function DeployTab() {
         setDeploying(false)
         es.close()
         fetchChecklist()
-        if (d.exit === 0) showToast('Deployment successful!')
+        if (d.exit === 0) { showToast('Deployment successful!'); onDeploySuccess?.() }
         else showToast('Deployment failed — check logs', 'error')
       }
     }

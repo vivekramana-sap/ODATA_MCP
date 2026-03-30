@@ -53,7 +53,6 @@ def load_services(config_path: str, cli_args) -> list:
             default_top            = default_top,
             max_top                = max_top,
             legacy_dates           = not getattr(cli_args, "no_legacy_dates",      False),
-            claude_code_friendly   = getattr(cli_args, "claude_code_friendly",    False),
             cookie_file            = cookie_file,
             cookie_string          = cookie_string,
             verbose_errors         = getattr(cli_args, "verbose_errors",          False),

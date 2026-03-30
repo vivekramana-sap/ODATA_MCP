@@ -5,17 +5,13 @@ Handles metadata parsing, CRUD operations, action/function calls,
 CSRF token management, and BTP connectivity proxy integration.
 """
 
-import base64
 import json
-import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
+import urllib.parse        # used for v2 FunctionImport param quoting in call_action
 import xml.etree.ElementTree as ET
-from http.cookiejar import CookieJar
-from http.server import HTTPServer
-from socketserver import ThreadingMixIn
+
+import requests
+from requests import Session
 
 from .constants import EDM_NS, HTTP_TIMEOUT, _GUID_RE
 from .helpers import (
@@ -25,17 +21,9 @@ from .helpers import (
     matches_patterns,
     load_cookies_from_file,
     parse_cookie_string,
+    safe_prop_name,
 )
 from . import auth as _auth
-from .auth import _get_btp_token
-
-
-# ---------------------------------------------------------------------------
-# Threading HTTP Server
-# ---------------------------------------------------------------------------
-
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +48,6 @@ class ODataService:
         default_top:            int  = 50,
         max_top:                int  = 500,
         legacy_dates:           bool = True,
-        claude_code_friendly:   bool = False,
         cookie_file:            str  = "",
         cookie_string:          str  = "",
         verbose_errors:         bool = False,
@@ -76,7 +63,6 @@ class ODataService:
         self.passthrough          = passthrough
         self.passthrough_header   = passthrough_header
         self.legacy_dates         = legacy_dates
-        self.claude_code_friendly = claude_code_friendly
         self.verbose_errors       = verbose_errors
         self.max_items            = max_items
         self.max_response_size    = max_response_size
@@ -109,8 +95,7 @@ class ODataService:
                 f"[bridge] {alias}: parsed {len(self._extra_cookies)} cookies from string\n"
             )
 
-        self._csrf_token        = ""
-        self._bootstrap_opener  = self._make_opener(username, password)
+        self._bootstrap_session     = self._make_session(username, password)
         self._load_metadata()
 
         if include:
@@ -123,98 +108,57 @@ class ODataService:
     # HTTP helpers                                                         #
     # ------------------------------------------------------------------ #
 
-    def _make_opener(
+    def _make_session(
         self,
         username:      str = "",
         password:      str = "",
         auth_header:   str = "",
         auth_hdr_name: str = "Authorization",
-    ) -> urllib.request.OpenerDirector:
-
-        handlers: list = [urllib.request.HTTPCookieProcessor(CookieJar())]
-
+    ) -> Session:
+        """Build a requests.Session pre-configured with auth, cookies, and BTP proxy."""
+        s = requests.Session()
         if _auth._BTP_PROXY_URL:
-            class _ProxyAuth(urllib.request.BaseHandler):
-                handler_order = 490
-
-                def http_request(self, req):
-                    req.add_unredirected_header(
-                        "Proxy-Authorization", f"Bearer {_get_btp_token()}"
-                    )
-                    return req
-
-                https_request = http_request
-
-            handlers.append(
-                urllib.request.ProxyHandler(
-                    {"http": _auth._BTP_PROXY_URL, "https": _auth._BTP_PROXY_URL}
-                )
-            )
-            handlers.append(_ProxyAuth())
-
-        opener = urllib.request.build_opener(*handlers)
-
+            s.proxies = {"http": _auth._BTP_PROXY_URL, "https": _auth._BTP_PROXY_URL}
         if auth_header:
-            av = auth_header
+            s.headers[auth_hdr_name] = auth_header
         elif username:
-            av = "Basic " + base64.b64encode(
-                f"{username}:{password}".encode()
-            ).decode()
-        else:
-            av = ""
+            s.auth = (username, password)
+        if self._extra_cookies:
+            s.cookies.update(self._extra_cookies)
+        return s
 
-        extra_cookies = self._extra_cookies
-
-        if av or extra_cookies:
-            _av           = av
-            _cookies      = extra_cookies
-            _auth_hdr_name = auth_hdr_name
-            _auth_header_name = _auth_hdr_name
-
-            class _Auth(urllib.request.BaseHandler):
-                def http_request(self, req):
-                    if _av:
-                        req.add_unredirected_header(_auth_header_name, _av)
-                    if _cookies:
-                        cookie_hdr = "; ".join(
-                            f"{k}={v}" for k, v in _cookies.items()
-                        )
-                        req.add_unredirected_header("Cookie", cookie_hdr)
-                    return req
-
-                https_request = http_request
-
-            opener.add_handler(_Auth())
-
-        return opener
-
-    def _opener(
-        self, auth_header: str = ""
-    ) -> urllib.request.OpenerDirector:
-        if self.passthrough and auth_header:
+    def _session_for(self, auth_header: str = "") -> Session:
+        """Return the per-request session (passthrough) or the cached bootstrap session."""
+        if auth_header and (
+            self.passthrough
+            or (auth_header.startswith("Bearer ") and _auth._XSUAA_INTROSPECT_URL)
+        ):
             hdr_name = self.passthrough_header or "Authorization"
-            return self._make_opener(
-                auth_header   = auth_header,
-                auth_hdr_name = hdr_name,
-            )
-        return self._bootstrap_opener
+            return self._make_session(auth_header=auth_header, auth_hdr_name=hdr_name)
+        return self._bootstrap_session
 
-    def _open(self, req, auth_header: str = ""):
-        return self._opener(auth_header).open(req, timeout=HTTP_TIMEOUT)
+    def _btp_refresh(self, session: Session) -> None:
+        """Refresh the BTP Proxy-Authorization header on the session before each call."""
+        if _auth._BTP_PROXY_URL:
+            session.headers["Proxy-Authorization"] = f"Bearer {_auth._get_btp_token()}"
 
-    def _fetch_csrf(self, opener: urllib.request.OpenerDirector) -> str:
+    def _fetch_csrf(self, session: Session) -> str:
+        """Fetch an x-csrf-token from $metadata (required before mutating requests)."""
         url = f"{self.url}/$metadata"
-        req = urllib.request.Request(url, headers={"x-csrf-token": "Fetch"})
+        self._btp_refresh(session)
         try:
-            with opener.open(req, timeout=HTTP_TIMEOUT) as r:
-                token = r.headers.get("x-csrf-token", "")
-                sys.stderr.write(f"[bridge] {self.alias}: CSRF token fetch {'ok' if token else 'empty (no token returned)'}\n")
-                if not token:
-                    raise RuntimeError(
-                        f"CSRF token fetch returned empty for {self.alias}. "
-                        "The OData server did not provide an x-csrf-token header."
-                    )
-                return token
+            r = session.get(url, headers={"x-csrf-token": "Fetch"}, timeout=HTTP_TIMEOUT)
+            token = r.headers.get("x-csrf-token", "")
+            sys.stderr.write(
+                f"[bridge] {self.alias}: CSRF token fetch "
+                f"{'ok' if token else 'empty (no token returned)'}\n"
+            )
+            if not token:
+                raise RuntimeError(
+                    f"CSRF token fetch returned empty for {self.alias}. "
+                    "The OData server did not provide an x-csrf-token header."
+                )
+            return token
         except RuntimeError:
             raise
         except Exception as exc:
@@ -228,10 +172,11 @@ class ODataService:
 
     def _load_metadata(self) -> None:
         url = f"{self.url}/$metadata"
-        req = urllib.request.Request(url)
+        self._btp_refresh(self._bootstrap_session)
         try:
-            with self._open(req) as r:
-                raw = r.read()
+            r = self._bootstrap_session.get(url, timeout=HTTP_TIMEOUT)
+            r.raise_for_status()
+            raw = r.content
         except Exception as exc:
             sys.stderr.write(f"[bridge] {self.alias}: metadata load failed: {exc}\n")
             return
@@ -574,7 +519,8 @@ class ODataService:
         body:          dict = None,
         extra_headers: dict = None,
         auth_header:   str  = "",
-        opener:        urllib.request.OpenerDirector = None,
+        session:       Session = None,
+        params:        dict = None,
     ) -> dict:
         if self.odata_version == "2":
             headers = {"Accept": "application/json"}
@@ -588,49 +534,83 @@ class ODataService:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode()
 
-        req = urllib.request.Request(
-            url, data=data, headers=headers, method=method
-        )
+        sess = session or self._session_for(auth_header)
+        self._btp_refresh(sess)
         try:
-            _opener = opener or self._opener(auth_header)
-            with _opener.open(req, timeout=HTTP_TIMEOUT) as r:
-                raw = r.read()
-                if self.max_response_size > 0 and len(raw) > self.max_response_size:
-                    sys.stderr.write(
-                        f"[bridge] {self.alias}: response capped "
-                        f"({len(raw):,} B > {self.max_response_size:,} B limit)\n"
-                    )
-                    return {
-                        "error": "RESPONSE_TOO_LARGE",
-                        "message": (
-                            f"OData response ({len(raw):,} B) exceeds "
-                            f"--max-response-size ({self.max_response_size:,} B). "
-                            "Narrow your query with $top, $select, or $filter."
-                        ),
-                    }
-                result = json.loads(raw) if raw else {}
-                if self.legacy_dates:
-                    result = convert_legacy_dates(result)
-                return result
-        except urllib.error.HTTPError as exc:
+            resp = sess.request(method, url, data=data, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            # Early bail-out: reject oversized responses before buffering the body
+            cl = int(resp.headers.get("Content-Length", 0) or 0)
+            if self.max_response_size > 0 and cl > self.max_response_size:
+                sys.stderr.write(
+                    f"[bridge] {self.alias}: response rejected via Content-Length "
+                    f"({cl:,} B > {self.max_response_size:,} B limit)\n"
+                )
+                return {
+                    "error": "RESPONSE_TOO_LARGE",
+                    "message": (
+                        f"OData response ({cl:,} B) exceeds "
+                        f"--max-response-size ({self.max_response_size:,} B). "
+                        "Narrow your query with $top, $select, or $filter."
+                    ),
+                }
+            raw = resp.content
+            if self.max_response_size > 0 and len(raw) > self.max_response_size:
+                sys.stderr.write(
+                    f"[bridge] {self.alias}: response capped "
+                    f"({len(raw):,} B > {self.max_response_size:,} B limit)\n"
+                )
+                return {
+                    "error": "RESPONSE_TOO_LARGE",
+                    "message": (
+                        f"OData response ({len(raw):,} B) exceeds "
+                        f"--max-response-size ({self.max_response_size:,} B). "
+                        "Narrow your query with $top, $select, or $filter."
+                    ),
+                }
+            result = json.loads(raw) if raw else {}
+            if self.legacy_dates:
+                result = convert_legacy_dates(result)
+            return result
+        except requests.HTTPError as exc:
+            resp = exc.response
             body_text = ""
             try:
-                body_text = exc.read().decode(errors="replace")
+                body_text = resp.text if resp is not None else ""
             except Exception:
                 pass
-            sys.stderr.write(f"[bridge] {self.alias}: {method} {url} → HTTP {exc.code}\n")
+            status = resp.status_code if resp is not None else 0
+            reason = resp.reason if resp is not None else str(exc)
+            sys.stderr.write(f"[bridge] {self.alias}: {method} {url} → HTTP {status}\n")
             if self.verbose_errors:
                 return {
-                    "error":       f"HTTP {exc.code}: {exc.reason}",
-                    "http_status": exc.code,
+                    "error":       f"HTTP {status}: {reason}",
+                    "http_status": status,
                     "detail":      body_text,
                 }
-            return {"error": f"HTTP {exc.code}: {exc.reason}"}
+            return {"error": f"HTTP {status}: {reason}"}
         except Exception as exc:
             sys.stderr.write(f"[bridge] {self.alias}: {method} error: {exc}\n")
             if self.verbose_errors:
                 return {"error": str(exc)}
             return {"error": "Internal error processing OData request"}
+
+    def _get(self, url: str, params: dict = None, auth: str = "") -> dict:
+        """GET + automatic v2 response normalisation."""
+        result = self._request("GET", url, params=params, auth_header=auth)
+        if isinstance(result, dict) and "d" in result:
+            result = self._normalize_v2_response(result)
+        return result
+
+    def _mutate(self, method: str, url: str, body: dict = None, auth: str = "") -> dict:
+        """Mutating request — fetches CSRF token, uses caller's session for principal propagation."""
+        sess = self._session_for(auth)
+        csrf = self._fetch_csrf(sess)
+        return self._request(
+            method, url, body=body,
+            extra_headers={"x-csrf-token": csrf},
+            session=sess,
+        )
 
     def _v2_params(self) -> dict:
         """Return OData v2-specific query parameters."""
@@ -709,14 +689,8 @@ class ODataService:
             else:
                 params["$count"]   = "true"
 
-        qs  = "&".join(
-            f"{k}={urllib.parse.quote(str(v), safe='')}"
-            for k, v in params.items()
-        )
-        url = f"{self.url}/{entity_set}" + (f"?{qs}" if qs else "")
-        result = self._request("GET", url, auth_header=auth)
-        if isinstance(result, dict) and "d" in result:
-            result = self._normalize_v2_response(result)
+        url = f"{self.url}/{entity_set}"
+        result = self._get(url, params=params, auth=auth)
 
         if isinstance(result, dict):
             items = result.get("value", [])
@@ -742,19 +716,12 @@ class ODataService:
             params = {"$format": "json", "$inlinecount": "allpages", "$top": "0"}
             if filter_expr:
                 params["$filter"] = filter_expr
-            qs = "&".join(
-                f"{k}={urllib.parse.quote(str(v), safe='')}"
-                for k, v in params.items()
-            )
-            url = f"{self.url}/{entity_set}?{qs}"
-            result = self._request("GET", url, auth_header=auth)
-            if isinstance(result, dict) and "d" in result:
-                result = self._normalize_v2_response(result)
-            return result
-        url = f"{self.url}/{entity_set}/$count"
-        if filter_expr:
-            url += f"?$filter={urllib.parse.quote(filter_expr, safe='')}"
-        return self._request("GET", url, auth_header=auth)
+            return self._get(f"{self.url}/{entity_set}", params=params, auth=auth)
+        return self._request(
+            "GET", f"{self.url}/{entity_set}/$count",
+            params={"$filter": filter_expr} if filter_expr else None,
+            auth_header=auth,
+        )
 
     def search(self, entity_set: str, args: dict, auth: str = "") -> dict:
         """Full-text search on an entity set using $search."""
@@ -766,77 +733,41 @@ class ODataService:
         params["$search"] = search_term
         if args.get("$select") or args.get("select"):
             params["$select"] = args.get("$select") or args.get("select")
-        if args.get("$top") or args.get("top"):
-            params["$top"] = str(args.get("$top") or args.get("top"))
-        elif self.default_top:
-            params["$top"] = str(self.default_top)
+        _stop = args.get("$top") or args.get("top")
+        if _stop is None and self.default_top:
+            _stop = self.default_top
+        if self.max_top and _stop is not None:
+            _stop = min(int(_stop), self.max_top)
+        if _stop is not None:
+            params["$top"] = str(_stop)
 
-        qs = "&".join(
-            f"{k}={urllib.parse.quote(str(v), safe='')}"
-            for k, v in params.items()
-        )
-        url = f"{self.url}/{entity_set}?{qs}"
-        result = self._request("GET", url, auth_header=auth)
-        if isinstance(result, dict) and "d" in result:
-            result = self._normalize_v2_response(result)
-        return result
+        return self._get(f"{self.url}/{entity_set}", params=params, auth=auth)
 
     def get(self, entity_set: str, key: str, args: dict, auth: str = "") -> dict:
         # Single-entity requests must not include $inlinecount (SAP rejects it with 400)
-        qs_parts: dict = {"$format": "json"} if self.odata_version == "2" else {}
+        params: dict = {"$format": "json"} if self.odata_version == "2" else {}
         if args.get("$select"):
-            qs_parts["$select"] = args["$select"]
+            params["$select"] = args["$select"]
         if args.get("$expand"):
-            qs_parts["$expand"] = args["$expand"]
-        qs = "&".join(
-            f"{k}={urllib.parse.quote(str(v), safe='')}"
-            for k, v in qs_parts.items()
-        )
-        url = f"{self.url}/{entity_set}({key})" + (f"?{qs}" if qs else "")
-        result = self._request("GET", url, auth_header=auth)
-        if isinstance(result, dict) and "d" in result:
-            result = self._normalize_v2_response(result)
-        return result
+            params["$expand"] = args["$expand"]
+        return self._get(f"{self.url}/{entity_set}({key})", params=params or None, auth=auth)
 
     def create(self, entity_set: str, body: dict, auth: str = "") -> dict:
-        opener = self._bootstrap_opener
-        csrf   = self._fetch_csrf(opener)
-        return self._request(
-            "POST",
-            f"{self.url}/{entity_set}",
-            body=body,
-            extra_headers={"x-csrf-token": csrf},
-            opener=opener,
-        )
+        return self._mutate("POST", f"{self.url}/{entity_set}", body=body, auth=auth)
 
     def update(
         self, entity_set: str, key: str, body: dict,
         method: str = "PATCH", auth: str = "",
     ) -> dict:
-        opener = self._bootstrap_opener
-        csrf   = self._fetch_csrf(opener)
-        return self._request(
-            method,
-            f"{self.url}/{entity_set}({key})",
-            body=body,
-            extra_headers={"x-csrf-token": csrf},
-            opener=opener,
-        )
+        return self._mutate(method, f"{self.url}/{entity_set}({key})", body=body, auth=auth)
 
     def delete(self, entity_set: str, key: str, auth: str = "") -> dict:
-        opener = self._bootstrap_opener
-        csrf   = self._fetch_csrf(opener)
-        return self._request(
-            "DELETE",
-            f"{self.url}/{entity_set}({key})",
-            extra_headers={"x-csrf-token": csrf},
-            opener=opener,
-        )
+        return self._mutate("DELETE", f"{self.url}/{entity_set}({key})", auth=auth)
 
     def call_action(
         self, action_name: str, params: dict, auth: str = ""
     ) -> dict:
-        opener = self._bootstrap_opener
+        session = self._session_for(auth)
         action_meta = next(
             (a for a in self.actions if a["name"] == action_name), {}
         )
@@ -856,17 +787,17 @@ class ODataService:
                 url = f"{self.url}/{action_name}"
                 if qs:
                     url += f"?{qs}"
-                return self._request("GET", url, auth_header=auth, opener=opener)
+                return self._request("GET", url, auth_header=auth, session=session)
             else:
-                csrf = self._fetch_csrf(opener)
+                csrf = self._fetch_csrf(session)
                 url = f"{self.url}/{action_name}"
                 return self._request(
                     http_method, url, body=params,
                     extra_headers={"x-csrf-token": csrf} if csrf else None,
-                    opener=opener,
+                    session=session,
                 )
 
-        csrf = self._fetch_csrf(opener)
+        csrf = self._fetch_csrf(session)
         fqn  = (
             f"{self.schema_ns}.{action_name}" if self.schema_ns else action_name
         )
@@ -879,21 +810,7 @@ class ODataService:
             url,
             body=params if http_method != "GET" else None,
             extra_headers={"x-csrf-token": csrf} if csrf else None,
-            opener=opener,
+            session=session,
         )
 
-    # ------------------------------------------------------------------ #
-    # Tool-name param helper                                               #
-    # ------------------------------------------------------------------ #
 
-    def _strip_dollar(self, name: str) -> str:
-        """Strip $ prefix from OData system params."""
-        if name.startswith("$"):
-            return name[1:]
-        return name
-
-    @staticmethod
-    def _safe_prop(name: str) -> str:
-        """Sanitize OData property name to match ^[a-zA-Z0-9_.-]{1,64}$."""
-        sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', name)[:64]
-        return sanitized or "_"

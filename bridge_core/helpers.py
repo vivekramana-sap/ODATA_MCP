@@ -9,6 +9,7 @@ import datetime
 import fnmatch
 import os
 import pathlib
+import re
 import sys
 
 from .constants import (
@@ -55,7 +56,6 @@ def edm_to_json(edm_type: str) -> str:
 
 def expand_env(value: str) -> str:
     """Expand ${VAR} placeholders in config strings."""
-    import re
     return re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), ""), value)
 
 
@@ -168,6 +168,20 @@ def _guard_params(params: dict) -> dict:
                 v = v[:_MAX_STRING_PARAM]
         out[k] = v
     return out
+
+
+# ---------------------------------------------------------------------------
+# Property-name sanitization
+# ---------------------------------------------------------------------------
+
+def safe_prop_name(name: str) -> str:
+    """Sanitize an OData property name for use as an MCP tool parameter.
+
+    Replaces any character outside [a-zA-Z0-9_.-] with '_' and truncates to
+    64 characters, matching the MCP tool schema pattern ^[a-zA-Z0-9_.-]{1,64}$.
+    """
+    sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', name)[:64]
+    return sanitized or "_"
 
 
 # ---------------------------------------------------------------------------

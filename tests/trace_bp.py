@@ -17,11 +17,14 @@ data = urllib.request.urlopen(EDMX_URL, timeout=30).read()
 sys.stderr.write(f"Downloaded {len(data):,} bytes\n")
 
 mock_resp = MagicMock()
-mock_resp.read.return_value = data
-mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-mock_resp.__exit__ = MagicMock(return_value=False)
+mock_resp.content = data
+mock_resp.raise_for_status = MagicMock()
+mock_resp.headers = {}
 
-with patch.object(ODataService, "_open", return_value=mock_resp):
+with patch('bridge_core.odata_service.requests.Session') as MockSession:
+    mock_sess = MagicMock()
+    mock_sess.get.return_value = mock_resp
+    MockSession.return_value = mock_sess
     svc = ODataService(
         alias="bp",
         url="https://example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER",

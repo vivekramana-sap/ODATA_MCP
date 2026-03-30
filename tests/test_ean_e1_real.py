@@ -55,11 +55,14 @@ EDMX = (
 ).encode()
 
 mock_resp = MagicMock()
-mock_resp.read.return_value = EDMX
-mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-mock_resp.__exit__ = MagicMock(return_value=False)
+mock_resp.content = EDMX
+mock_resp.raise_for_status = MagicMock()
+mock_resp.headers = {}
 
-with patch.object(ODataService, '_open', return_value=mock_resp):
+with patch('bridge_core.odata_service.requests.Session') as MockSession:
+    mock_sess = MagicMock()
+    mock_sess.get.return_value = mock_resp
+    MockSession.return_value = mock_sess
     svc = ODataService(
         alias="ean_e1",
         url="http://fake/",

@@ -8,15 +8,16 @@ Modules:
   auth           — BTP Connectivity proxy, XSUAA authentication
   odata_service  — ODataService class (metadata, CRUD, actions)
   bridge         — Bridge class (tool generation, MCP dispatch)
-  transports     — stdio transport, HTTP handler, trace mode
+  transports     — Streamable HTTP handler, ThreadingHTTPServer, trace mode
   config         — services.json loader
+  _ui            — Embedded browser test UI (HTML constant)
 """
 
 from .helpers import _load_dotenv
 from .auth import _init_btp_proxy, _init_xsuaa
-from .odata_service import ThreadingHTTPServer, ODataService
+from .odata_service import ODataService
 from .bridge import Bridge
-from .transports import print_trace, run_stdio, make_http_handler
+from .transports import ThreadingHTTPServer, print_trace, make_http_handler
 from .config import load_services
 
 __all__ = [
@@ -27,7 +28,6 @@ __all__ = [
     "ODataService",
     "Bridge",
     "print_trace",
-    "run_stdio",
     "make_http_handler",
     "load_services",
 ]

@@ -9,6 +9,7 @@ interface Props {
   defaultGroup?: string
   existingGroups?: string[]
   existingAliases?: string[]
+  cfRoutes?: string
   onSave: (data: ODataService) => void
   onClose: () => void
 }
@@ -19,7 +20,7 @@ const BLANK: ODataService = {
   username: '${ODATA_USERNAME}',
   password: '${ODATA_PASSWORD}',
   passthrough: true,
-  readonly: false,
+  readonly: true,
   default_top: 50,
 }
 
@@ -56,7 +57,7 @@ function genAlias(existingAliases: string[]): string {
   return `svc_${Date.now() % 10000}`
 }
 
-export default function ServiceModal({ service, defaultGroup, existingGroups = [], existingAliases = [], onSave, onClose }: Props) {
+export default function ServiceModal({ service, defaultGroup, existingGroups = [], existingAliases = [], cfRoutes, onSave, onClose }: Props) {
   const isEdit = !!service
   const [form, setForm] = useState<ODataService>(() => {
     if (service) return { ...BLANK, ...service }
@@ -64,6 +65,7 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
   })
   const [probe, setProbe]       = useState<ProbeResult | null>(null)
   const [probing, setProbing]   = useState(false)
+  const [probedUrl, setProbedUrl] = useState<string | null>(service?.url?.trim() ?? null)
   const [selEs, setSelEs]       = useState<Set<string> | null>(null)
   const [selAct, setSelAct]     = useState<Set<string> | null>(null)
   const [groupIsNew, setGroupIsNew] = useState(
@@ -90,7 +92,14 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
   const set = <K extends keyof ODataService>(k: K, v: ODataService[K]) =>
     setForm(f => ({ ...f, [k]: v }))
 
-  const valid = form.alias.trim() && form.url.trim()
+  const urlProbed = !!probe?.success && probedUrl === form.url.trim()
+  // Probe must have found at least one entity set or action to be considered valid
+  const probeHasTools = urlProbed && ((probe?.entity_sets?.length ?? 0) > 0 || (probe?.actions?.length ?? 0) > 0)
+  // For edits, allow save without re-probe if the URL hasn't changed since modal opened
+  const urlOk = isEdit
+    ? (form.url.trim() === (service?.url?.trim() ?? '') || probeHasTools)
+    : probeHasTools
+  const valid = !!(form.alias.trim() && form.url.trim() && urlOk)
 
   const handleProbe = async () => {
     setProbing(true)
@@ -98,6 +107,8 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
       const result = await probeService(form)
       setProbe(result)
       if (result.success) {
+        setShowEntityFilter(true)
+        setProbedUrl(form.url.trim())
         const allEs  = result.entity_sets.map(e => e.name)
         const allAct = result.actions || []
         setSelEs(new Set(form.include?.length ? form.include : allEs))
@@ -163,7 +174,9 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
 
           {/* URL */}
           <Field label="OData Service URL" required>
-            <input className="input w-full" value={form.url} onChange={e => set('url', e.target.value)} placeholder="https://host/sap/opu/odata4/…" />
+            <input className="input w-full" value={form.url}
+              onChange={e => { set('url', e.target.value); if (e.target.value.trim() !== probedUrl) setProbe(null) }}
+              placeholder="https://host/sap/opu/odata4/…" />
           </Field>
 
           {/* Group — always visible */}
@@ -197,10 +210,24 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
                 autoFocus
               />
             )}
-            <div className="mt-1.5 flex items-center gap-2 px-2.5 py-1.5 bg-surface-1 border border-border rounded text-xs">
-              <span className="text-text-muted">→</span>
-              <code className="font-mono text-gold">{form.group ? `/mcp/${form.group}` : '/mcp'}</code>
-              <span className="text-text-muted">on bridge</span>
+            <div className="mt-1.5 space-y-1">
+              <div className="flex items-center gap-2 px-2.5 py-1.5 bg-surface-1 border border-border rounded text-xs">
+                <span className="text-text-muted shrink-0">Local →</span>
+                <code className="font-mono text-gold flex-1">{form.group ? `/mcp/${form.group}` : '/mcp'}</code>
+              </div>
+              {cfRoutes ? (
+                <div className="flex items-center gap-2 px-2.5 py-1.5 bg-surface-1 border border-border rounded text-xs">
+                  <span className="text-text-muted shrink-0">BTP →</span>
+                  <code className="font-mono text-gold flex-1 truncate">https://{cfRoutes}{form.group ? `/mcp/${form.group}` : '/mcp'}</code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(`https://${cfRoutes}${form.group ? `/mcp/${form.group}` : '/mcp'}`)}
+                    className="shrink-0 text-xs px-1.5 py-0.5 rounded border border-border hover:border-gold hover:text-gold transition-colors text-text-muted"
+                  >Copy</button>
+                </div>
+              ) : (
+                <p className="text-xs text-text-muted px-1">BTP URL available after first deployment</p>
+              )}
             </div>
           </Field>
 
@@ -232,6 +259,11 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
                 Remember
               </label>
             </div>
+            {form.passthrough && (
+              <p className="text-xs text-text-muted bg-surface-2 border border-border/50 rounded px-2.5 py-1.5 mt-1">
+                ℹ The caller&apos;s <code className="font-mono">Authorization</code> header is forwarded to the OData service instead of the credentials above. Use when SAP XSUAA or another IdP issues tokens that the SAP backend accepts directly (e.g. OAuth 2.0 principal propagation).
+              </p>
+            )}
           </div>
 
           {/* Options row */}
@@ -321,6 +353,13 @@ export default function ServiceModal({ service, defaultGroup, existingGroups = [
 
         {/* Sticky footer */}
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-border shrink-0">
+          {form.url.trim() && !urlOk && (
+            <p className="text-xs text-status-orange mr-auto self-center">
+              {urlProbed && !probeHasTools
+                ? 'No entity sets or actions found — check the URL'
+                : 'Probe the URL first to verify it\u2019s reachable'}
+            </p>
+          )}
           <button onClick={onClose} className="btn-ghost text-sm">Cancel</button>
           <button onClick={handleSave} disabled={!valid} className="btn-gold text-sm">Save</button>
         </div>

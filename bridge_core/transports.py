@@ -1,7 +1,8 @@
 """
 Transport layer for the OData MCP Bridge.
 
-Includes: stdio transport, HTTP transport with CORS/auth, and trace mode.
+Provides the Streamable HTTP transport (MCP over HTTP/JSON-RPC + CORS),
+a trace mode, and the ThreadingHTTPServer used by server.py.
 """
 
 import base64
@@ -9,11 +10,21 @@ import json
 import os
 import sys
 import urllib.parse
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 from . import auth as _auth
 from .auth import _xsuaa_introspect, _xsuaa_oauth_metadata
 from .bridge import Bridge
+
+
+# ---------------------------------------------------------------------------
+# Threading HTTP Server
+# ---------------------------------------------------------------------------
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Thread-per-request HTTP server used to host the MCP endpoint."""
+    daemon_threads = True
 
 
 # ---------------------------------------------------------------------------
@@ -43,38 +54,6 @@ def print_trace(bridge: Bridge) -> None:
     print(f"Total tools registered: {len(bridge._all_tools)}")
     print("Remove --trace to start the actual MCP server.")
     print(sep)
-
-
-# ---------------------------------------------------------------------------
-# stdio transport  (Claude Desktop / Claude Code / any MCP host)
-# ---------------------------------------------------------------------------
-
-def run_stdio(bridge: Bridge, verbose: bool = False) -> None:
-    """Read JSON-RPC requests from stdin and write responses to stdout."""
-    if verbose:
-        sys.stderr.write("[bridge] transport: stdio\n")
-
-    for raw_line in sys.stdin:
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
-
-        try:
-            req = json.loads(raw_line)
-        except json.JSONDecodeError as exc:
-            resp = {
-                "jsonrpc": "2.0",
-                "id":      None,
-                "error":   {"code": -32700, "message": f"Parse error: {exc}"},
-            }
-            sys.stdout.write(json.dumps(resp) + "\n")
-            sys.stdout.flush()
-            continue
-
-        resp = bridge.handle(req)
-        if resp is not None:
-            sys.stdout.write(json.dumps(resp) + "\n")
-            sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +87,17 @@ def make_http_handler(
             return (group, b) if b else (group, None)
         return None, None
 
+    def _discovery(group: str, bridge: Bridge) -> dict:
+        return {
+            "endpoint":         group or "default",
+            "path":             f"/mcp/{group}" if group else "/mcp",
+            "protocol":         "mcp",
+            "transport":        "Streamable HTTP — POST JSON-RPC to this URL",
+            "services":         list(bridge.services.keys()),
+            "tools_count":      len(bridge._all_tools),
+            "available_groups": sorted(k for k in _bridges if k),
+        }
+
     class MCPHandler(BaseHTTPRequestHandler):
         protocol_version  = "HTTP/1.1"
         mcp_username: str = ""
@@ -136,56 +126,47 @@ def make_http_handler(
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
 
+        @staticmethod
+        def _decode_basic(ah: str):
+            """Decode a Basic auth header; returns (user, password) or (None, None)."""
+            try:
+                u, _, p = base64.b64decode(ah[6:]).decode().partition(":")
+                return u, p
+            except Exception:
+                return None, None
+
         def _auth_ok(self) -> bool:
             ah = self.headers.get("Authorization", "")
 
             if _auth._XSUAA_INTROSPECT_URL:
-                if ah.startswith("Bearer "):
-                    token  = ah[7:].strip()
-                    result = _xsuaa_introspect(token)
-                    if result.get("active"):
-                        self._xsuaa_user = (
-                            result.get("user_name")
-                            or result.get("sub", "")
-                        )
-                        return True
+                if not ah.startswith("Bearer "):
                     return False
+                result = _xsuaa_introspect(ah[7:].strip())
+                if result.get("active"):
+                    self._xsuaa_user = result.get("user_name") or result.get("sub", "")
+                    return True
                 return False
 
             if _mcp_token:
                 if ah == f"Bearer {_mcp_token.strip()}":
                     return True
                 if ah.startswith("Basic ") and MCPHandler.mcp_username:
-                    try:
-                        decoded = base64.b64decode(ah[6:]).decode()
-                        u, _, p = decoded.partition(":")
-                        if u == MCPHandler.mcp_username and p == MCPHandler.mcp_password:
-                            return True
-                    except Exception:
-                        pass
+                    u, p = MCPHandler._decode_basic(ah)
+                    return u == MCPHandler.mcp_username and p == MCPHandler.mcp_password
                 return False
 
             if MCPHandler.mcp_username:
                 if ah.startswith("Basic "):
-                    try:
-                        decoded = base64.b64decode(ah[6:]).decode()
-                        u, _, p = decoded.partition(":")
-                        return (
-                            u == MCPHandler.mcp_username
-                            and p == MCPHandler.mcp_password
-                        )
-                    except Exception:
-                        pass
+                    u, p = MCPHandler._decode_basic(ah)
+                    return u == MCPHandler.mcp_username and p == MCPHandler.mcp_password
                 return False
 
             return True
 
-        def _caller_auth(self) -> str:
-            if _passthrough:
-                ah = self.headers.get("Authorization", "")
-                if ah.startswith("Basic "):
-                    return ah
-            return ""
+        def _send_empty(self, status: int) -> None:
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_OPTIONS(self):
             self.send_response(204)
@@ -194,68 +175,30 @@ def make_http_handler(
 
         def do_GET(self):
             if self.path in ("/health", "/healthz"):
-                body = json.dumps({"status": "ok"}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type",   "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self._cors()
-                self.end_headers()
-                self.wfile.write(body)
+                all_svcs = [alias for b in _bridges.values() for alias in b.services]
+                self._send_json({"status": "ok", "services": all_svcs})
             elif self.path == "/mcp" or (
                 self.path.startswith("/mcp/")
                 and "/" not in self.path[5:].split("?")[0]
                 and self.path[5:].split("?")[0]
             ):
-                # Return discovery metadata as JSON; clients use POST for JSON-RPC
                 group, bridge = _resolve_bridge(self.path.split("?")[0])
                 if bridge is None:
-                    err = json.dumps({"error": f"No MCP endpoint at {self.path.split('?')[0]}"}).encode()
-                    self.send_response(404)
-                    self.send_header("Content-Type",   "application/json")
-                    self.send_header("Content-Length", str(len(err)))
-                    self._cors()
-                    self.end_headers()
-                    self.wfile.write(err)
+                    self._send_json({"error": f"No MCP endpoint at {self.path.split('?')[0]}"}, status=404)
                 else:
-                    info = {
-                        "endpoint":         group or "default",
-                        "path":             f"/mcp/{group}" if group else "/mcp",
-                        "protocol":         "mcp",
-                        "transport":        "Streamable HTTP — POST JSON-RPC to this URL",
-                        "services":         list(bridge.services.keys()),
-                        "tools_count":      len(bridge._all_tools),
-                        "available_groups": sorted(k for k in _bridges if k),
-                    }
-                    body = json.dumps(info, indent=2).encode()
-                    self.send_response(200)
-                    self.send_header("Content-Type",   "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self._cors()
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_json(_discovery(group, bridge), indent=2)
             elif self.path in (
                 "/.well-known/oauth-authorization-server",
                 "/.well-known/openid-configuration",
             ):
                 if not _auth._XSUAA_INTROSPECT_URL:
-                    self.send_response(404)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._send_empty(404)
                     return
-                host   = self.headers.get("Host", "localhost")
-                origin = f"https://{host}"
-                body   = json.dumps(_xsuaa_oauth_metadata(bridge_origin=origin)).encode()
-                self.send_response(200)
-                self.send_header("Content-Type",   "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self._cors()
-                self.end_headers()
-                self.wfile.write(body)
+                host = self.headers.get("Host", "localhost")
+                self._send_json(_xsuaa_oauth_metadata(bridge_origin=f"https://{host}"))
             elif self.path.startswith("/authorize"):
                 if not _auth._XSUAA_CREDS:
-                    self.send_response(404)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._send_empty(404)
                     return
                 base     = _auth._XSUAA_CREDS.get("url", "").rstrip("/")
                 qs       = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -270,57 +213,36 @@ def make_http_handler(
                 self._cors()
                 self.end_headers()
             else:
-                self.send_response(404)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                self._send_empty(404)
 
         def do_POST(self):
             if self.path == "/register":
                 if not _auth._XSUAA_CREDS:
-                    self.send_response(404)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._send_empty(404)
                     return
                 length = int(self.headers.get("Content-Length", 0))
                 try:
                     req_data = json.loads(self.rfile.read(length)) if length else {}
                 except Exception:
                     req_data = {}
-                redirect_uris = req_data.get("redirect_uris", [])
-                body = json.dumps({
+                self._send_json({
                     "client_id":                  _auth._XSUAA_CREDS.get("clientid", ""),
                     "client_secret":              _auth._XSUAA_CREDS.get("clientsecret", ""),
                     "grant_types":                ["authorization_code", "client_credentials"],
                     "token_endpoint_auth_method": "client_secret_basic",
-                    "redirect_uris":              redirect_uris,
+                    "redirect_uris":              req_data.get("redirect_uris", []),
                     "scope":                      "openid",
-                }).encode()
-                self.send_response(201)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self._cors()
-                self.end_headers()
-                self.wfile.write(body)
+                }, status=201)
                 return
 
             # ---- Route /mcp and /mcp/<group> paths ----
             group, active_bridge = _resolve_bridge(self.path)
             if group is None:
-                # Not a recognised MCP path
-                self.send_response(404)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                self._send_empty(404)
                 return
 
             if active_bridge is None:
-                # Valid /mcp/<group> pattern but no bridge registered for that group
-                body = json.dumps({"error": f"Unknown MCP group: {group}"}).encode()
-                self.send_response(404)
-                self.send_header("Content-Type",   "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self._cors()
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json({"error": f"Unknown MCP group: {group}"}, status=404)
                 return
 
             if not self._auth_ok():
@@ -349,29 +271,14 @@ def make_http_handler(
             raw    = self.rfile.read(length).strip()
 
             if not raw:
-                # Empty body — return discovery info same as GET
-                group, active_bridge = _resolve_bridge(self.path)
-                info = {
-                    "endpoint":         group or "default",
-                    "path":             f"/mcp/{group}" if group else "/mcp",
-                    "protocol":         "mcp",
-                    "transport":        "Streamable HTTP — POST JSON-RPC to this URL",
-                    "services":         list(active_bridge.services.keys()),
-                    "tools_count":      len(active_bridge._all_tools),
-                    "available_groups": sorted(k for k in _bridges if k),
-                }
-                self._send_json(info)
+                self._send_json(_discovery(group, active_bridge))
                 return
 
             try:
                 req = json.loads(raw)
             except json.JSONDecodeError as exc:
-                resp = {
-                    "jsonrpc": "2.0",
-                    "id":      None,
-                    "error":   {"code": -32700, "message": f"Parse error: {exc}"},
-                }
-                self._send_json(resp)
+                self._send_json({"jsonrpc": "2.0", "id": None,
+                                 "error": {"code": -32700, "message": f"Parse error: {exc}"}})
                 return
 
             resp = active_bridge.handle(req, auth_header=self._caller_auth())
@@ -383,10 +290,27 @@ def make_http_handler(
                 self._cors()
                 self.end_headers()
 
-        def _send_json(self, data: dict) -> None:
-            body = json.dumps(data).encode()
-            self.send_response(200)
-            self.send_header("Content-Type",   "application/json")
+        def _caller_auth(self) -> str:
+            ah = self.headers.get("Authorization", "")
+            # XSUAA mode: token already validated — forward for SAP principal propagation
+            if _auth._XSUAA_INTROSPECT_URL and ah.startswith("Bearer "):
+                return ah
+            # Passthrough mode: forward any auth header (Basic or Bearer)
+            if _passthrough and ah:
+                return ah
+            return ""
+
+        def _send_json(self, data: dict, status: int = 200, indent=None) -> None:
+            # MCP Streamable HTTP (2025-03-26): respond as SSE when client advertises it.
+            body = json.dumps(data, indent=indent).encode()
+            if "text/event-stream" in self.headers.get("Accept", ""):
+                body = b"data: " + body + b"\n\n"
+                self.send_response(200)
+                self.send_header("Content-Type",  "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+            else:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self._cors()
             self.end_headers()

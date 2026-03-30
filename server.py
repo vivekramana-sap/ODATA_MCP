@@ -2,46 +2,39 @@
 """
 JAM OData MCP Bridge (Enhanced v2.0)
 ======================================
-Multi-service OData v4 -> MCP bridge server.
+Multi-service OData v4 → MCP bridge server.
 
-New in v2.0:
-  - stdio transport (Claude Desktop / Claude Code / any MCP host)
-  - SAP legacy /Date(ms)/ -> ISO-8601 conversion (default ON)
+Key features:
+  - Streamable HTTP transport (MCP 2025-03-26 spec)
+  - SAP legacy /Date(ms)/ → ISO-8601 conversion (default ON)
   - Granular op filtering: --enable / --disable (C/S/F/G/U/D/A/R)
   - MCP Bearer token auth: --mcp-token / --mcp-token-file
   - Wildcard entity filtering via fnmatch (Product*, Order*)
   - Cookie file (Netscape) and cookie-string authentication
   - Graceful SIGTERM / SIGINT shutdown
-  - Claude Code friendly: strips $ from param names (-c flag)
   - --trace: dump all tools + exit (debug mode)
   - --read-only-but-functions: hide CUD, keep actions
   - --sort-tools / --no-sort-tools
   - --max-items: hard cap on returned rows + pagination hint
   - --verbose-errors: full HTTP detail in error responses
-
-Original features preserved:
   - BTP Connectivity proxy (VCAP_SERVICES / CF on-premise tunnel)
   - Multi-service architecture with aliases (services.json)
   - Passthrough auth (forward caller credentials to OData)
   - CORS for Copilot Studio and browser clients
-  - Count operation per entity set
-  - Pure Python stdlib — zero external dependencies
+  - Uses requests library for HTTP
 
 Module structure (bridge_core/ package):
   bridge_core/
-    __init__.py     — Package exports
-    constants.py    — EDM mappings, operation codes, regex patterns
-    helpers.py      — .env loader, type conversion, date handling, OpFilter,
-                      pattern matching, input guards, cookie helpers
-    auth.py         — BTP Connectivity proxy, XSUAA authentication
+    __init__.py      — Package exports
+    constants.py     — EDM mappings, operation codes, regex patterns
+    helpers.py       — .env loader, type conversion, date handling, OpFilter,
+                       pattern matching, input guards, cookie helpers
+    auth.py          — BTP Connectivity proxy, XSUAA authentication
     odata_service.py — ODataService class (metadata, CRUD, actions)
-    bridge.py       — Bridge class (tool generation, MCP dispatch)
-    transports.py   — stdio transport, HTTP handler, trace mode
-    config.py       — services.json loader
-  server.py        — Entry point (this file): argparse + main()
-
-Usage (stdio, Claude Desktop / Claude Code):
-    python3 server.py --config services.json --transport stdio
+    bridge.py        — Bridge class (tool generation, MCP dispatch)
+    transports.py    — Streamable HTTP handler, ThreadingHTTPServer, trace mode
+    config.py        — services.json loader
+  server.py         — Entry point (this file): argparse + main()
 
 Usage (HTTP, local dev):
     python3 server.py --config services.json --port 7777
@@ -72,6 +65,7 @@ import argparse
 import os
 import signal
 import sys
+from collections import defaultdict
 
 from bridge_core import (
     _load_dotenv,
@@ -80,7 +74,6 @@ from bridge_core import (
     ThreadingHTTPServer,
     Bridge,
     print_trace,
-    run_stdio,
     make_http_handler,
     load_services,
 )
@@ -121,13 +114,8 @@ def main() -> None:
     parser.add_argument(
         "--port", type=int,
         default=int(os.environ.get("PORT", 7777)),
-        help="HTTP port (http transport only)",
+        help="HTTP port (default: 7777, env: PORT)",
     )
-    parser.add_argument(
-        "--transport", choices=["stdio", "http"], default="http",
-        help="Transport type: stdio (Claude Desktop/Code) or http (default)",
-    )
-
     # ---- MCP auth ----
     parser.add_argument(
         "--username", default=os.environ.get("MCP_USERNAME", ""),
@@ -207,10 +195,6 @@ def main() -> None:
         help="Disable automatic /Date(ms)/ -> ISO-8601 conversion",
     )
     parser.add_argument(
-        "-c", "--claude-code-friendly", action="store_true",
-        help="Strip $ prefix from OData param names (for Claude Code CLI)",
-    )
-    parser.add_argument(
         "--max-items", type=int, default=100,
         help="Hard cap on items returned per tool call (default: 100)",
     )
@@ -236,7 +220,8 @@ def main() -> None:
     mcp_token = args.mcp_token
     if args.mcp_token_file and not mcp_token:
         try:
-            mcp_token = open(args.mcp_token_file).read().strip()
+            with open(args.mcp_token_file) as fh:
+                mcp_token = fh.read().strip()
         except OSError as exc:
             sys.stderr.write(f"[bridge] cannot read token file: {exc}\n")
             sys.exit(1)
@@ -252,8 +237,7 @@ def main() -> None:
     bridge = Bridge(services, sort_tools=args.sort_tools, verbose=args.verbose)
 
     # ---- Build per-group sub-bridges for /mcp/<group> routing ----
-    from collections import defaultdict as _defaultdict
-    _groups: dict = _defaultdict(list)
+    _groups: dict = defaultdict(list)
     for svc in services:
         if svc.group:
             _groups[svc.group].append(svc)
@@ -275,16 +259,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT,  _shutdown)
 
-    # ---- Transport selection ----
-    if args.transport == "stdio":
-        if args.verbose:
-            sys.stderr.write(
-                f"[bridge] stdio transport | {len(bridge._all_tools)} tools\n"
-            )
-        run_stdio(bridge, verbose=args.verbose)
-        return
-
-    # ---- HTTP transport ----
+    # ---- HTTP transport (Streamable HTTP) ----
     MCPHandler = make_http_handler(
         bridges, mcp_token=mcp_token, passthrough=args.passthrough
     )
@@ -336,7 +311,6 @@ def main() -> None:
                 f"{len(svc.entity_sets)} entity sets, "
                 f"{len(svc.actions)} actions | "
                 f"legacy_dates={svc.legacy_dates} "
-                f"claude_friendly={svc.claude_code_friendly} "
                 f"max_items={svc.max_items}\n"
             )
 

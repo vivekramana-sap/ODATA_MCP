@@ -2,6 +2,19 @@
 
 const safeAlias = (alias: string) => alias.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'svc'
 
+/** Stable fingerprint of operationally-relevant service config fields for change detection. */
+const svcFingerprint = (s: ODataService) => JSON.stringify({
+  url: s.url ?? '',
+  username: s.username ?? '',
+  password: s.password ?? '',
+  passthrough: !!s.passthrough,
+  readonly: !!s.readonly,
+  default_top: s.default_top ?? 50,
+  group: s.group ?? '',
+  include: [...(s.include ?? [])].sort().join(','),
+  include_actions: [...(s.include_actions ?? [])].sort().join(','),
+})
+
 import { useEffect, useState } from 'react'
 import type { ODataService, BridgeStatus, MCPTool, CfAppStatus, BtpHealth } from '@/lib/types'
 import { putServices, getCfApp, getBtpHealth } from '@/lib/api'
@@ -13,9 +26,10 @@ interface Props {
   bridge: BridgeStatus
   tools: MCPTool[]
   onSave: () => void
+  deployedSnapshot?: ODataService[]
 }
 
-export default function ServicesTab({ services, bridge, tools = [], onSave }: Props) {
+export default function ServicesTab({ services, bridge, tools = [], onSave, deployedSnapshot = [] }: Props) {
   const [modal, setModal] = useState<{ index: number; data: ODataService | null; defaultGroup?: string } | null>(null)
   const [cfApp,   setCfApp]   = useState<CfAppStatus | null>(null)
   const [btp,     setBtp]     = useState<BtpHealth | null>(null)
@@ -51,6 +65,12 @@ export default function ServicesTab({ services, bridge, tools = [], onSave }: Pr
 
   const existingGroups = [...new Set(services.map(s => s.group).filter(Boolean) as string[])]
   const existingAliases = services.map(s => s.alias)
+  const btpAliases = new Set<string>(btp?.services ?? [])
+  const btpRunning = cfApp?.state?.toLowerCase() === 'started' && btp?.ok === true && (btp?.services?.length ?? 0) > 0
+  // Map alias → last-deployed service config (from localStorage snapshot taken at deploy time)
+  const deployedByAlias = new Map<string, ODataService>(
+    (deployedSnapshot ?? []).map(s => [s.alias, s])
+  )
 
   return (
     <div className="space-y-4">
@@ -89,6 +109,9 @@ export default function ServicesTab({ services, bridge, tools = [], onSave }: Pr
           tools={tools}
           bridgeRunning={bridge.running}
           cfRoutes={cfApp?.routes}
+          btpAliases={btpAliases}
+          btpRunning={btpRunning}
+          deployedByAlias={deployedByAlias}
           onEdit={(idx) => setModal({ index: idx, data: services[idx] })}
           onDelete={handleDelete}
           onAddToGroup={(group) => setModal({ index: -1, data: null, defaultGroup: group })}
@@ -101,6 +124,7 @@ export default function ServicesTab({ services, bridge, tools = [], onSave }: Pr
           defaultGroup={modal.defaultGroup}
           existingGroups={existingGroups}
           existingAliases={existingAliases}
+          cfRoutes={cfApp?.routes}
           onSave={handleModalSave}
           onClose={() => setModal(null)}
         />
@@ -111,11 +135,14 @@ export default function ServicesTab({ services, bridge, tools = [], onSave }: Pr
 
 // ── Accordion ──────────────────────────────────────────────────────────────
 
-function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, onEdit, onDelete, onAddToGroup }: {
+function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, btpAliases, btpRunning, deployedByAlias, onEdit, onDelete, onAddToGroup }: {
   services: ODataService[]
   tools: MCPTool[]
   bridgeRunning: boolean
   cfRoutes?: string
+  btpAliases?: Set<string>
+  btpRunning?: boolean
+  deployedByAlias?: Map<string, ODataService>
   onEdit: (idx: number) => void
   onDelete: (idx: number) => void
   onAddToGroup: (group: string) => void
@@ -187,6 +214,20 @@ function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, onEdit,
                 </span>
               )}
 
+              {/* BTP availability badge for this group */}
+              {btpRunning && (() => {
+                const total  = indices.length
+                const inBtpN = btpAliases ? indices.filter(i => btpAliases.has(services[i].alias)).length : 0
+                const color  = inBtpN === total ? 'bg-status-green/10 border-status-green/20 text-status-green'
+                             : inBtpN > 0       ? 'bg-status-orange/10 border-status-orange/20 text-status-orange'
+                                                : 'bg-surface-3 border-border text-text-muted'
+                return (
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${color}`}>
+                    ☁ {inBtpN === total ? 'BTP' : `${inBtpN}/${total} BTP`}
+                  </span>
+                )
+              })()}
+
               <div className="flex-1" />
 
               {/* URL copy */}
@@ -221,6 +262,9 @@ function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, onEdit,
                       svc={svc}
                       toolCount={tc}
                       bridgeRunning={bridgeRunning}
+                      inBtp={btpAliases?.has(svc.alias)}
+                      btpRunning={btpRunning}
+                      deployedSvc={deployedByAlias?.get(svc.alias)}
                       onEdit={() => onEdit(idx)}
                       onDelete={() => onDelete(idx)}
                     />
@@ -235,13 +279,20 @@ function GroupAccordion({ services, tools = [], bridgeRunning, cfRoutes, onEdit,
   )
 }
 
-function ServiceRow({ svc, toolCount, bridgeRunning, onEdit, onDelete }: {
+function ServiceRow({ svc, toolCount, bridgeRunning, inBtp, btpRunning, deployedSvc, onEdit, onDelete }: {
   svc: ODataService
   toolCount: number
   bridgeRunning: boolean
+  inBtp?: boolean
+  btpRunning?: boolean
+  deployedSvc?: ODataService
   onEdit: () => void
   onDelete: () => void
 }) {
+  const isLocalOnly = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(svc.url)
+  // Deployment state derived from snapshot (independent of BTP health)
+  const isNew      = deployedSvc === undefined
+  const isModified = !isNew && svcFingerprint(svc) !== svcFingerprint(deployedSvc!)
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-surface-1 hover:bg-surface-2 transition-colors group">
       {/* Alias */}
@@ -256,11 +307,21 @@ function ServiceRow({ svc, toolCount, bridgeRunning, onEdit, onDelete }: {
 
       {/* Badges */}
       <div className="hidden sm:flex items-center gap-1.5 shrink-0">
-        {svc.readonly      && <Badge color="gray">read-only</Badge>}
-        {svc.include       && <Badge color="green">{svc.include.length} ent.</Badge>}
+        {svc.readonly        && <Badge color="gray">read-only</Badge>}
+        {svc.include         && <Badge color="green">{svc.include.length} ent.</Badge>}
         {svc.include_actions && <Badge color="green">{svc.include_actions.length} act.</Badge>}
         {bridgeRunning && toolCount > 0  && <Badge color="green">⚡ {toolCount}</Badge>}
         {bridgeRunning && toolCount === 0 && <Badge color="red">⚠ 0</Badge>}
+        {isLocalOnly && <Badge color="gray" title="Only reachable on this machine">local</Badge>}
+        {/* Deployment state — 4 states driven by snapshot + optional BTP health confirmation */}
+        {isModified
+          ? <Badge color="gold"   title="Config changed since last deploy — redeploy to sync">modified</Badge>
+          : isNew
+            ? <Badge color="gray"   title="Never deployed to BTP">new · local</Badge>
+            : (btpRunning && !inBtp)
+              ? <Badge color="orange" title="Snapshot says deployed but not found in BTP — redeploy">not in BTP</Badge>
+              : <Badge color="green"  title={btpRunning ? 'Running in BTP' : 'Matches last deployment'}>☁ deployed</Badge>
+        }
       </div>
 
       {/* Actions */}
@@ -306,23 +367,34 @@ function DeployStrip({ cfApp, btp, services, loading }: {
 
       <div className="flex-1" />
 
-      {/* Service sync badges */}
-      {btp?.ok && allAliases.map(alias => {
-        const inBtp   = btpAliases.has(alias)
-        const inLocal = localAliases.has(alias)
-        return (
-          <span
-            key={alias}
-            title={inBtp && inLocal ? 'In sync' : inBtp ? 'BTP only' : 'Local only — redeploy'}
-            className={`font-mono px-1.5 py-0.5 rounded border
-              ${inBtp && inLocal ? 'border-status-green/40 text-status-green bg-status-green/10'
-              : inBtp            ? 'border-status-orange/40 text-status-orange bg-status-orange/10'
-                                 : 'border-status-red/40 text-status-red bg-status-red/10'}`}
-          >
-            {inBtp ? '✓' : '✕'} {alias}
-          </span>
-        )
-      })}
+      {/* Service sync badges — only shown when BTP health returns a services list.
+           If the deployed bridge pre-dates the services key in /health, we show a
+           generic "BTP ✓" badge rather than falsely marking every service as missing. */}
+      {btp?.ok && (btp.services && btp.services.length > 0 ? (
+        allAliases.map(alias => {
+          const inBtp   = btpAliases.has(alias)
+          const inLocal = localAliases.has(alias)
+          return (
+            <span
+              key={alias}
+              title={inBtp && inLocal ? 'In sync' : inBtp ? 'BTP only' : 'Local only — redeploy to sync'}
+              className={`font-mono px-1.5 py-0.5 rounded border
+                ${inBtp && inLocal ? 'border-status-green/40 text-status-green bg-status-green/10'
+                : inBtp            ? 'border-status-orange/40 text-status-orange bg-status-orange/10'
+                                   : 'border-status-red/40 text-status-red bg-status-red/10'}`}
+            >
+              {inBtp ? '✓' : '✕'} {alias}
+            </span>
+          )
+        })
+      ) : (
+        <span
+          title="BTP app is running — redeploy to see per-service sync status"
+          className="px-1.5 py-0.5 rounded border border-status-green/40 text-status-green bg-status-green/10 text-xs"
+        >
+          ✓ BTP running
+        </span>
+      ))}
 
       {btp && !btp.ok && (
         <span className="text-status-red">{btp.error ?? 'BTP unreachable'}</span>
@@ -333,7 +405,7 @@ function DeployStrip({ cfApp, btp, services, loading }: {
 
 // ── Tiny helpers ───────────────────────────────────────────────────────────
 
-function Badge({ color, children }: { color: 'green' | 'red' | 'orange' | 'gray' | 'gold'; children: React.ReactNode }) {
+function Badge({ color, title, children }: { color: 'green' | 'red' | 'orange' | 'gray' | 'gold'; title?: string; children: React.ReactNode }) {
   const cls = {
     green:  'bg-status-green/10 text-status-green border-status-green/20',
     red:    'bg-status-red/10   text-status-red   border-status-red/20',
@@ -341,7 +413,7 @@ function Badge({ color, children }: { color: 'green' | 'red' | 'orange' | 'gray'
     gray:   'bg-surface-3 text-text-muted border-border',
     gold:   'bg-gold/10 text-gold border-gold/20',
   }[color]
-  return <span className={`inline text-xs px-1.5 py-0.5 rounded border ${cls}`}>{children}</span>
+  return <span title={title} className={`inline text-xs px-1.5 py-0.5 rounded border ${cls}`}>{children}</span>
 }
 
 

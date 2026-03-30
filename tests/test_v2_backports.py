@@ -76,11 +76,14 @@ class TestV2ServiceParsing(unittest.TestCase):
     def setUpClass(cls):
         """Create a service by mocking the HTTP metadata fetch."""
         mock_response = MagicMock()
-        mock_response.read.return_value = _edmx_data
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.content = _edmx_data
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {}
 
-        with patch.object(ODataService, '_open', return_value=mock_response):
+        with patch('bridge_core.odata_service.requests.Session') as MockSession:
+            mock_sess = MagicMock()
+            mock_sess.get.return_value = mock_response
+            MockSession.return_value = mock_sess
             cls.svc = ODataService(
                 alias="bp",
                 url="https://example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER",
@@ -123,11 +126,14 @@ class TestV2Params(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         mock_response = MagicMock()
-        mock_response.read.return_value = _edmx_data
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.content = _edmx_data
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {}
 
-        with patch.object(ODataService, '_open', return_value=mock_response):
+        with patch('bridge_core.odata_service.requests.Session') as MockSession:
+            mock_sess = MagicMock()
+            mock_sess.get.return_value = mock_response
+            MockSession.return_value = mock_sess
             cls.svc = ODataService(
                 alias="bp",
                 url="https://example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER",
@@ -152,11 +158,11 @@ class TestV2Params(unittest.TestCase):
 
     def test_filter_url_contains_format_json(self):
         """Capture the URL built by filter() and check v2 params."""
-        captured_urls = []
+        captured = []
 
         orig_request = self.svc._request
         def mock_request(method, url, **kwargs):
-            captured_urls.append(url)
+            captured.append((url, kwargs))
             # Return a fake v2 response
             return {"d": {"results": [{"BusinessPartner": "1"}], "__count": "1"}}
 
@@ -165,11 +171,12 @@ class TestV2Params(unittest.TestCase):
             # Pick the first entity set that has BusinessPartner in the name
             es = next(n for n in self.svc.entity_sets if "A_BusinessPartner" == n)
             result = self.svc.filter(es, {})
-            self.assertEqual(len(captured_urls), 1)
-            url = captured_urls[0]
-            print(f"  Filter URL: {url}")
-            self.assertIn("$format=json", url, "URL should contain $format=json")
-            self.assertIn("$inlinecount=allpages", url, "URL should contain $inlinecount=allpages")
+            self.assertEqual(len(captured), 1)
+            url, kwargs = captured[0]
+            params = kwargs.get("params", {})
+            print(f"  Filter URL: {url}, params: {params}")
+            self.assertEqual(params.get("$format"), "json", "params should contain $format=json")
+            self.assertEqual(params.get("$inlinecount"), "allpages", "params should contain $inlinecount=allpages")
         finally:
             self.svc._request = orig_request
 
@@ -199,37 +206,39 @@ class TestV2Params(unittest.TestCase):
 
     def test_get_url_contains_format_json(self):
         """get() should also include $format=json for v2."""
-        captured_urls = []
+        captured = []
 
         def mock_request(method, url, **kwargs):
-            captured_urls.append(url)
+            captured.append((url, kwargs))
             return {"d": {"BusinessPartner": "1", "BusinessPartnerFullName": "John"}}
 
         self.svc._request = mock_request
         try:
             result = self.svc.get("A_BusinessPartner", "BusinessPartner='0000000001'", {})
-            url = captured_urls[0]
-            print(f"  Get URL: {url}")
-            self.assertIn("$format=json", url, "GET should contain $format=json")
+            url, kwargs = captured[0]
+            params = kwargs.get("params", {})
+            print(f"  Get URL: {url}, params: {params}")
+            self.assertEqual(params.get("$format"), "json", "params should contain $format=json")
         finally:
             pass
 
     def test_count_v2_uses_inlinecount(self):
         """count() for v2 should use $inlinecount=allpages&$top=0 instead of /$count."""
-        captured_urls = []
+        captured = []
 
         def mock_request(method, url, **kwargs):
-            captured_urls.append(url)
+            captured.append((url, kwargs))
             return {"d": {"results": [], "__count": "100"}}
 
         self.svc._request = mock_request
         try:
             result = self.svc.count("A_BusinessPartner")
-            url = captured_urls[0]
-            print(f"  Count URL: {url}")
+            url, kwargs = captured[0]
+            params = kwargs.get("params", {})
+            print(f"  Count URL: {url}, params: {params}")
             self.assertNotIn("/$count", url, "v2 should NOT use /$count endpoint")
-            self.assertIn("$inlinecount=allpages", url)
-            self.assertIn("$top=0", url)
+            self.assertEqual(params.get("$inlinecount"), "allpages")
+            self.assertEqual(params.get("$top"), "0")
         finally:
             pass
 
@@ -240,11 +249,14 @@ class TestV2Headers(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         mock_response = MagicMock()
-        mock_response.read.return_value = _edmx_data
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.content = _edmx_data
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {}
 
-        with patch.object(ODataService, '_open', return_value=mock_response):
+        with patch('bridge_core.odata_service.requests.Session') as MockSession:
+            mock_sess = MagicMock()
+            mock_sess.get.return_value = mock_response
+            MockSession.return_value = mock_sess
             cls.svc = ODataService(
                 alias="bp",
                 url="https://example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER",
@@ -254,34 +266,23 @@ class TestV2Headers(unittest.TestCase):
 
     def test_v2_request_no_odata_version_header(self):
         """For v2, Accept should be application/json without OData-Version: 4.0."""
-        captured_requests = []
+        fake_resp = MagicMock()
+        fake_resp.content = b'{"d":{"results":[]}}'
+        fake_resp.raise_for_status = MagicMock()
 
-        class FakeResponse:
-            def read(self):
-                return b'{"d":{"results":[]}}'
-            def __enter__(self):
-                return self
-            def __exit__(self, *a):
-                pass
-
-        orig_opener = self.svc._bootstrap_opener
-
-        class FakeOpener:
-            def open(self, req, **kwargs):
-                captured_requests.append(req)
-                return FakeResponse()
-
-        self.svc._bootstrap_opener = FakeOpener()
+        orig_session = self.svc._bootstrap_session
+        mock_sess = MagicMock()
+        mock_sess.request.return_value = fake_resp
+        self.svc._bootstrap_session = mock_sess
         try:
             self.svc._request("GET", "https://example.com/test")
-            req = captured_requests[0]
-            headers = dict(req.headers)
-            self.assertNotIn("Odata-version", headers,
+            call_headers = mock_sess.request.call_args[1].get("headers", {})
+            self.assertNotIn("OData-Version", call_headers,
                              "v2 should NOT send OData-Version header")
-            self.assertEqual(headers.get("Accept"), "application/json")
-            print(f"  v2 request headers: {headers}")
+            self.assertEqual(call_headers.get("Accept"), "application/json")
+            print(f"  v2 request headers: {call_headers}")
         finally:
-            self.svc._bootstrap_opener = orig_opener
+            self.svc._bootstrap_session = orig_session
 
 
 class TestGUIDWrapping(unittest.TestCase):
@@ -290,11 +291,14 @@ class TestGUIDWrapping(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         mock_response = MagicMock()
-        mock_response.read.return_value = _edmx_data
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.content = _edmx_data
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {}
 
-        with patch.object(ODataService, '_open', return_value=mock_response):
+        with patch('bridge_core.odata_service.requests.Session') as MockSession:
+            mock_sess = MagicMock()
+            mock_sess.get.return_value = mock_response
+            MockSession.return_value = mock_sess
             cls.svc = ODataService(
                 alias="bp",
                 url="https://example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER",

@@ -2,6 +2,9 @@
 BACKEND_PORT=${1:-7770}
 UI_PORT=${2:-3001}
 
+# Ensure Python dependencies are installed
+python3 -m pip install -q -r requirements.txt
+
 kill_port() {
   ss -tlnp "sport = :$1" 2>/dev/null | awk -F'pid=' '/pid=/{print $2}' | cut -d, -f1 | xargs -r kill -9 2>/dev/null
 }

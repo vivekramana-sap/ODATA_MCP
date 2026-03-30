@@ -29,6 +29,7 @@ export default function ToolsTab({ tools = [], bridge, services, mcpPort, onBrid
   const [logs,      setLogs]      = useState<string[]>([])
   const [showLogs,  setShowLogs]  = useState(false)
   const [copied,    setCopied]    = useState(false)
+  const [urlCopied, setUrlCopied] = useState(false)
   const logsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -134,6 +135,15 @@ export default function ToolsTab({ tools = [], bridge, services, mcpPort, onBrid
             {bridge.running ? `MCP Bridge running on port ${mcpPort}` : 'MCP Bridge is not running'}
           </p>
           {bridge.pid && <p className="text-xs text-text-muted">PID: {bridge.pid}</p>}
+          {bridge.running && (
+            <button
+              onClick={() => { navigator.clipboard.writeText(`http://localhost:${mcpPort}/mcp`); setUrlCopied(true); setTimeout(() => setUrlCopied(false), 2000) }}
+              className="font-mono text-xs text-text-muted hover:text-gold transition-colors"
+              title="Copy MCP endpoint URL"
+            >
+              http://localhost:{mcpPort}/mcp {urlCopied ? '✓' : '⎘'}
+            </button>
+          )}
         </div>
         {bridge.running ? (
           <>
@@ -176,6 +186,15 @@ export default function ToolsTab({ tools = [], bridge, services, mcpPort, onBrid
         <div className="text-xs border-l-2 border-status-orange bg-status-orange/5 px-3 py-2 rounded-r text-text-secondary flex items-center gap-3">
           No tools discovered. Check your services.
           <button onClick={onToolsRefresh} className="btn-ghost text-xs px-2 py-1">↻ Retry</button>
+        </div>
+      )}
+
+      {/* Bridge running but only __info tools — SAP systems unreachable locally */}
+      {bridge.running && safeTools.length > 0 && safeTools.every(t => t.name.endsWith('__info')) && (
+        <div className="text-xs border-l-2 border-status-orange bg-status-orange/5 px-3 py-2 rounded-r text-text-secondary space-y-1">
+          <p className="font-medium text-status-orange">⚠ Bridge started but OData metadata could not be loaded</p>
+          <p>Only service info tools are available. This usually means the SAP systems are not reachable from this machine (VPN required, or the host/port is wrong). Check the bridge startup log below.</p>
+          <button onClick={() => { getBridgeLogs().then(d => { setLogs(d.logs); setShowLogs(true) }); onToolsRefresh() }} className="btn-ghost text-xs px-2 py-1 mt-1">↻ Retry &amp; show log</button>
         </div>
       )}
 
@@ -268,6 +287,25 @@ export default function ToolsTab({ tools = [], bridge, services, mcpPort, onBrid
                     })()}
                   </div>
                   {selected.description && <p className="text-xs text-text-secondary mt-1">{selected.description}</p>}
+
+                  {/* Copyable MCP endpoint URL for this service's group */}
+                  {(() => {
+                    const svc  = services.find(sv => selected.name.startsWith(safeAlias(sv.alias) + '_'))
+                    const path = svc?.group ? `/mcp/${svc.group}` : '/mcp'
+                    const url  = `http://localhost:${mcpPort}${path}`
+                    return (
+                      <div className="flex items-center gap-2 mt-2 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-xs">
+                        <span className="text-text-muted shrink-0">Endpoint</span>
+                        <code className="font-mono text-gold flex-1 truncate">{url}</code>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(url); setUrlCopied(true); setTimeout(() => setUrlCopied(false), 2000) }}
+                          className="shrink-0 text-xs px-1.5 py-0.5 rounded border border-border hover:border-gold hover:text-gold transition-colors text-text-muted"
+                        >
+                          {urlCopied ? '✓' : 'Copy'}
+                        </button>
+                      </div>
+                    )
+                  })()}
                 </div>
 
                 <ToolForm tool={selected} args={args} setArgs={setArgs} />

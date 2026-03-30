@@ -3,13 +3,14 @@ BTP Connectivity proxy and XSUAA authentication for the OData MCP Bridge.
 """
 
 import base64
+import hashlib
 import json
 import os
 import sys
+import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+
+import requests
 
 
 # ---------------------------------------------------------------------------
@@ -20,29 +21,27 @@ _BTP_PROXY_URL:    str   = ""
 _BTP_PROXY_TOKEN:  str   = ""
 _BTP_TOKEN_EXPIRY: float = 0.0
 _BTP_TOKEN_URL:    str   = ""
+_BTP_LOCK = threading.Lock()
 
 
 def _btp_fetch_token(clientid: str, clientsecret: str, token_url: str) -> None:
     """Fetch a new BTP proxy token and update the global expiry timestamp."""
     global _BTP_PROXY_TOKEN, _BTP_TOKEN_EXPIRY
-    data = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
-    auth = base64.b64encode(f"{clientid}:{clientsecret}".encode()).decode()
-    req  = urllib.request.Request(
-        token_url, data=data,
-        headers={
-            "Authorization":  f"Basic {auth}",
-            "Content-Type":   "application/x-www-form-urlencoded",
-        },
+    r = requests.post(
+        token_url,
+        data    = {"grant_type": "client_credentials"},
+        auth    = (clientid, clientsecret),
+        timeout = 30,
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        payload           = json.loads(r.read())
-        _BTP_PROXY_TOKEN  = payload["access_token"]
-        ttl               = int(payload.get("expires_in", 3600))
-        _BTP_TOKEN_EXPIRY = time.time() + ttl
-        sys.stderr.write(
-            f"[bridge] BTP token refreshed, expires in {ttl}s "
-            f"(at {time.strftime('%H:%M:%S', time.localtime(_BTP_TOKEN_EXPIRY))})\n"
-        )
+    r.raise_for_status()
+    payload           = r.json()
+    _BTP_PROXY_TOKEN  = payload["access_token"]
+    ttl               = int(payload.get("expires_in", 3600))
+    _BTP_TOKEN_EXPIRY = time.time() + ttl
+    sys.stderr.write(
+        f"[bridge] BTP token refreshed, expires in {ttl}s "
+        f"(at {time.strftime('%H:%M:%S', time.localtime(_BTP_TOKEN_EXPIRY))})\n"
+    )
 
 
 def _get_btp_token() -> str:
@@ -53,17 +52,21 @@ def _get_btp_token() -> str:
     if time.time() < _BTP_TOKEN_EXPIRY - 60:
         return _BTP_PROXY_TOKEN
 
-    vcap_raw = os.environ.get("VCAP_SERVICES", "")
-    if not vcap_raw:
-        return _BTP_PROXY_TOKEN
-    try:
-        vcap         = json.loads(vcap_raw)
-        conn         = vcap.get("connectivity", [{}])[0].get("credentials", {})
-        clientid     = conn.get("clientid", "")
-        clientsecret = conn.get("clientsecret", "")
-        _btp_fetch_token(clientid, clientsecret, _BTP_TOKEN_URL)
-    except Exception as exc:
-        sys.stderr.write(f"[bridge] BTP token refresh failed: {exc} - using stale token\n")
+    with _BTP_LOCK:
+        # Re-check after acquiring lock — another thread may have refreshed already
+        if time.time() < _BTP_TOKEN_EXPIRY - 60:
+            return _BTP_PROXY_TOKEN
+        vcap_raw = os.environ.get("VCAP_SERVICES", "")
+        if not vcap_raw:
+            return _BTP_PROXY_TOKEN
+        try:
+            vcap         = json.loads(vcap_raw)
+            conn         = vcap.get("connectivity", [{}])[0].get("credentials", {})
+            clientid     = conn.get("clientid", "")
+            clientsecret = conn.get("clientsecret", "")
+            _btp_fetch_token(clientid, clientsecret, _BTP_TOKEN_URL)
+        except Exception as exc:
+            sys.stderr.write(f"[bridge] BTP token refresh failed: {exc} - using stale token\n")
     return _BTP_PROXY_TOKEN
 
 
@@ -104,6 +107,27 @@ _XSUAA_TOKEN_URL: str      = ""
 _XSUAA_AUTH_URL: str       = ""
 _XSUAA_APPNAME: str        = ""
 
+# Introspection cache: token_hash -> (result_dict, expires_at)
+_INTROSPECT_CACHE: dict = {}
+_INTROSPECT_LOCK = threading.Lock()
+_INTROSPECT_CACHE_TTL = 300   # seconds — cache active tokens for up to 5 minutes
+_INTROSPECT_CACHE_MAX = 1000  # max entries; oldest evicted when exceeded
+
+
+def _jwt_exp(token: str) -> float:
+    """Decode the JWT payload (no signature verification) and return exp as a Unix timestamp.
+    Returns 0.0 if the token is malformed or has no exp claim."""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return 0.0
+        # JWT uses URL-safe base64 without padding
+        padded = parts[1] + "==" * ((-len(parts[1])) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+        return float(payload.get("exp", 0))
+    except Exception:
+        return 0.0
+
 
 def _init_xsuaa() -> None:
     """Read xsuaa credentials from VCAP_SERVICES if the service is bound."""
@@ -137,30 +161,61 @@ def _init_xsuaa() -> None:
 
 
 def _xsuaa_introspect(token: str) -> dict:
-    """Call XSUAA /introspect and return the token info dict."""
+    """Call XSUAA /introspect and return the token info dict.
+
+    Results are cached for up to _INTROSPECT_CACHE_TTL seconds (keyed by
+    SHA-256 of the token).  The cache entry is evicted at the earlier of:
+    - the token's own JWT exp claim, or
+    - now + _INTROSPECT_CACHE_TTL.
+    This avoids a round-trip to XSUAA on every MCP request while still
+    honouring short-lived tokens and revoking cached entries promptly.
+    """
     if not _XSUAA_INTROSPECT_URL or not _XSUAA_CREDS:
         return {"active": False, "error": "xsuaa not configured"}
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now = time.time()
+
+    with _INTROSPECT_LOCK:
+        cached = _INTROSPECT_CACHE.get(token_hash)
+        if cached is not None:
+            result, expires_at = cached
+            if now < expires_at:
+                return result
+            del _INTROSPECT_CACHE[token_hash]
+
     clientid     = _XSUAA_CREDS.get("clientid", "")
     clientsecret = _XSUAA_CREDS.get("clientsecret", "")
-    auth         = base64.b64encode(f"{clientid}:{clientsecret}".encode()).decode()
-    data         = urllib.parse.urlencode({"token": token}).encode()
-    req          = urllib.request.Request(
-        _XSUAA_INTROSPECT_URL,
-        data    = data,
-        headers = {
-            "Authorization": f"Basic {auth}",
-            "Content-Type":  "application/x-www-form-urlencoded",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            result = json.loads(r.read())
-            if not result.get("active"):
-                sys.stderr.write(f"[bridge] XSUAA introspect: token not active — {result}\n")
+        r = requests.post(
+            _XSUAA_INTROSPECT_URL,
+            data    = {"token": token},
+            auth    = (clientid, clientsecret),
+            timeout = 10,
+        )
+        r.raise_for_status()
+        result = r.json()
+        if not result.get("active"):
+            sys.stderr.write(f"[bridge] XSUAA introspect: token not active — {result}\n")
             return result
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        sys.stderr.write(f"[bridge] XSUAA introspect HTTP {exc.code}: {body}\n")
+        # Cache only active tokens; expire at min(jwt exp, now + TTL)
+        jwt_exp = _jwt_exp(token)
+        expires_at = min(
+            jwt_exp if jwt_exp > now else now + _INTROSPECT_CACHE_TTL,
+            now + _INTROSPECT_CACHE_TTL,
+        )
+        with _INTROSPECT_LOCK:
+            _INTROSPECT_CACHE[token_hash] = (result, expires_at)
+            if len(_INTROSPECT_CACHE) > _INTROSPECT_CACHE_MAX:
+                # Evict the entry with the earliest expiry
+                oldest = min(_INTROSPECT_CACHE, key=lambda k: _INTROSPECT_CACHE[k][1])
+                del _INTROSPECT_CACHE[oldest]
+        return result
+    except requests.HTTPError as exc:
+        resp = exc.response
+        body = resp.text if resp is not None else str(exc)
+        status = resp.status_code if resp is not None else 0
+        sys.stderr.write(f"[bridge] XSUAA introspect HTTP {status}: {body}\n")
         return {"active": False, "error": body}
     except Exception as exc:
         sys.stderr.write(f"[bridge] XSUAA introspect error: {exc}\n")
